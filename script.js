@@ -84,6 +84,10 @@
   let groundX = 0;                 // scroll offset of the ground strip
   let holdY = 0, holdT = 0;        // plank: locked gap height and seconds held
   let attract = true;              // demo running behind the intro screen
+  let gapHook = null;              // offline rendering: (gap, playH, margin, speed) => gap centre
+  let gapFracOverride = null;      // offline rendering: widen the gap for demo footage
+  let spawnGate = null;            // offline rendering: () => boolean, may postpone a spawn
+  let speedStepOverride = null;    // offline rendering: freeze the speed ramp so pipe timing is predictable
   const groundH = () => H * GROUND_FRAC;
   const groundTop = () => H - groundH();
   let stateTimer = 0;
@@ -142,16 +146,28 @@
 
   // ---------- Pose ----------
   let pose = null;
+  // Dev/demo: ?src=<video url> feeds a video file through the tracker instead of the webcam.
+  const SRC_PARAM = new URLSearchParams(location.search).get('src');
+  let manualPump = false;          // when true, frames are pushed to the tracker by the caller (offline render)
+  let frameSource = null;          // offline render: an image/canvas drawn instead of the video element
+
   async function startCamera() {
     camPhase = 'starting';
     setStatus('starting camera… allow access');
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-    });
-    video.srcObject = stream;
-    await new Promise((res) => (video.onloadedmetadata = res));
-    await video.play();
+    if (SRC_PARAM) {
+      video.src = SRC_PARAM; video.loop = true; video.muted = true;
+      manualPump = new URLSearchParams(location.search).get('manual') === '1';
+      await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = rej; });
+      if (!manualPump) await video.play();
+    } else {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      video.srcObject = stream;
+      await new Promise((res) => (video.onloadedmetadata = res));
+      await video.play();
+    }
     resize(video.videoWidth, video.videoHeight);
 
     if (typeof Pose === 'undefined') {
@@ -173,7 +189,8 @@
     });
     pose.onResults(onPose);
     setStatus('loading pose model…');
-    pump();
+    await pose.initialize();
+    if (!manualPump) pump();
   }
 
   async function pump() {
@@ -409,17 +426,18 @@
     const pipeW = Math.min(W, H) * PIPE_W_FRAC;
     const gap = hold
       ? H * (HOLD_GAP_START + (HOLD_GAP_END - HOLD_GAP_START) * Math.min(1, holdT / HOLD_GAP_SECS))
-      : H * GAP_FRAC;
+      : H * (gapFracOverride ?? GAP_FRAC);
     groundX += speed * dt;
 
     spawnTimer -= dt * 1000 * speedMult;
-    if (spawnTimer <= 0) {
+    if (spawnTimer <= 0 && (!spawnGate || spawnGate(speed, pipeW, gap))) {
       spawnTimer = SPAWN_MS;
       const margin = H * 0.08;
       const playH = groundTop();
-      const cy = hold
+      let cy = hold
         ? Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, holdY))
         : margin + gap / 2 + Math.random() * (playH - 2 * margin - gap);
+      if (gapHook) cy = Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, gapHook(gap, playH, margin, speed, pipeW)));
       pipes.push({ x: W + pipeW, w: pipeW, top: cy - gap / 2, bottom: cy + gap / 2, passed: false });
     }
 
@@ -434,7 +452,7 @@
           sfx.tick();
         } else {
           score += 1;
-          speedMult = Math.min(MAX_SPEED_MULT, speedMult + SPEED_STEP);
+          speedMult = Math.min(MAX_SPEED_MULT, speedMult + (speedStepOverride ?? SPEED_STEP));
           onPoint();
         }
       }
@@ -518,11 +536,11 @@
   // ---------- Drawing ----------
   let vignette = null, vignetteKey = '';
   function drawVideo() {
-    if (video.readyState >= 2 && video.videoWidth) {
+    if (frameSource || (video.readyState >= 2 && video.videoWidth)) {
       ctx.save();
       ctx.translate(W, 0); ctx.scale(-1, 1); // selfie mirror
       ctx.filter = 'saturate(0.8) contrast(1.05)';   // lets the pixel art pop over the room
-      ctx.drawImage(video, 0, 0, W, H);
+      ctx.drawImage(frameSource || video, 0, 0, W, H);
       ctx.restore();
     } else {
       const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -977,5 +995,26 @@
   // Expose a little for debugging in the console.
   window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit,
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
-    _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; }, addPipe: (x, top, bottom) => pipes.push({ x, w: Math.min(W, H) * PIPE_W_FRAC, top, bottom, passed: false }) } };
+    _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
+      // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.
+      trackAt: async (t) => {
+        await new Promise((res) => { video.onseeked = res; video.currentTime = t; });
+        await pose.send({ image: video });
+        return { y: tracking.targetY, seen: performance.now() - tracking.lastSeen < 200, source: tracking.source };
+      },
+      // Offline render from still frames (hidden tabs don't decode video on seek).
+      setFrameSource: (src) => { frameSource = src; if (src && src.width) resize(src.width, src.height); },
+      trackImage: async (img) => {
+        tracking.lastSeen = 0;
+        await pose.send({ image: img });
+        return { y: tracking.targetY, seen: performance.now() - tracking.lastSeen < 200, source: tracking.source };
+      },
+      get camPhase() { return camPhase; },
+      setGapHook: (fn) => { gapHook = fn; },
+      setGapFrac: (v) => { gapFracOverride = v; },
+      setSpawnGate: (fn) => { spawnGate = fn; },
+      setSpeedStep: (v) => { speedStepOverride = v; },
+      get birdRadius() { return 20 * unit; },
+      get speed() { return W * BASE_SPEED_FRAC * speedMult; },
+      addPipe: (x, top, bottom) => pipes.push({ x, w: Math.min(W, H) * PIPE_W_FRAC, top, bottom, passed: false }) } };
 })();

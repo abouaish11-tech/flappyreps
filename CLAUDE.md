@@ -42,3 +42,8 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `groundTop()`. `drawGround()` tiles a baked ground strip (`GROUND_FRAC` of H)
   that scrolls with pipe speed (idle drift otherwise) over a slower bush layer;
   the bird is clamped above it and pipe gaps are spawned within the play area.
+- Offline rendering / demo videos: `?src=<video>&manual=1` feeds a file through the
+  tracker instead of the webcam; `window.__pushupBird._debug` exposes `render`,
+  `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,
+  `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
+  recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
