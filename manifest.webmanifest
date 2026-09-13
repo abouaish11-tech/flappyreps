@@ -1,0 +1,14 @@
+{
+  "name": "Flappy Reps",
+  "short_name": "Flappy Reps",
+  "description": "Flappy Bird, but you are the controller. Push-ups, squats and planks fly the bird through the pipes.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0b0b0f",
+  "theme_color": "#0b0b0f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

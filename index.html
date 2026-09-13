@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Flappy Reps — push-ups, squats and planks, Flappy Bird style</title>
+  <meta name="description" content="Flappy Reps turns your workout into Flappy Bird. Your camera tracks your body: every rep flies the bird through the pipes. Push-ups, squats and planks, no equipment, no account." />
+  <meta property="og:title" content="Flappy Reps" />
+  <meta property="og:description" content="Flappy Bird, but you are the controller. Do push-ups, squats or planks in front of your camera and fly through the pipes." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://flappyreps.com/" />
+  <meta property="og:image" content="https://flappyreps.com/icons/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="game"></canvas>
+    <div id="status" class="pill">starting camera…</div>
+    <button id="mode" class="pill" type="button" aria-label="switch exercise">PUSH-UPS</button>
+    <button id="board" class="pill" type="button" aria-label="leaderboard">🏆</button>
+    <button id="mute" class="pill" type="button" aria-label="toggle sound">🔊</button>
+  </div>
+
+  <div id="leaderboard" class="overlay" hidden>
+    <div class="card board">
+      <div class="board-head">
+        <h2>LEADERBOARD</h2>
+        <button id="board-close" type="button" aria-label="close">✕</button>
+      </div>
+      <label class="name-row">NAME
+        <input id="player-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" />
+      </label>
+      <div class="seg" id="board-tabs">
+        <button type="button" data-board="pushup">PUSH-UPS</button>
+        <button type="button" data-board="squat">SQUATS</button>
+        <button type="button" data-board="plank">PLANK</button>
+      </div>
+      <ol id="board-list"></ol>
+      <div id="board-stats" class="stats"></div>
+      <button id="board-clear" type="button" class="link">clear history</button>
+    </div>
+  </div>
+
+  <div id="intro">
+    <div class="card">
+      <h1>FLAPPY REPS</h1>
+      <div class="seg" role="radiogroup" aria-label="exercise">
+        <button type="button" data-mode="pushup">PUSH-UPS</button>
+        <button type="button" data-mode="squat">SQUATS</button>
+        <button type="button" data-mode="plank">PLANK</button>
+      </div>
+      <p id="intro-hint">Get in push-up position facing the camera. The bird follows your <b>shoulders</b>: go down, it drops; push up, it rises.</p>
+      <p>Time each rep to fly through the pipe gap. Every pipe cleared is one rep. Plank is a hold: stay level as long as you can.</p>
+      <button id="start" type="button">ENABLE CAMERA &amp; PLAY</button>
+      <button id="intro-board" type="button" class="secondary">🏆 LEADERBOARD</button>
+      <p class="tiny">No camera? Use ↑ / ↓ keys to move the bird.</p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+  <script src="script.js"></script>
+</body>
+</html>
