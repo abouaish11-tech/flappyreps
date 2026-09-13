@@ -32,17 +32,17 @@
     pushup: {
       label: 'PUSH-UPS', unit: 'push-up', points: [11, 12], source: 'shoulders', pipes: 'copper',
       ready: 'GET IN PUSH-UP POSITION',
-      hint: 'Get in push-up position facing the camera. The bird follows your <b>shoulders</b>: go down, it drops; push up, it rises.',
+      hint: 'Phone on the floor, face the camera. Go down and the bird drops, push up and it rises.',
     },
     squat: {
       label: 'SQUATS', unit: 'squat', points: [23, 24], source: 'hips', pipes: 'green',
       ready: 'STAND BACK, HIPS IN FRAME',
-      hint: 'Stand back so your hips are in frame. The bird follows your <b>hips</b>: squat down, it drops; stand up, it rises.',
+      hint: 'Stand back until your hips are in frame. Squat and the bird drops, stand and it rises.',
     },
     plank: {
       label: 'PLANK', unit: 's', points: [23, 24], source: 'hips', pipes: 'steel', hold: true,
       ready: 'SIDE VIEW, HOLD THE PLANK',
-      hint: 'Put the phone to your side so your whole body is in frame. The bird follows your <b>hips</b>. Pipe gaps lock to your hip height: sag or pike and you hit. Score is seconds held.',
+      hint: 'Camera at your side, whole body in frame. The gaps lock to your hip height, so stay level. Score is seconds held.',
     },
   };
   const MODE_ORDER = Object.keys(MODES);
@@ -83,6 +83,7 @@
   let spawnTimer = 0;
   let groundX = 0;                 // scroll offset of the ground strip
   let holdY = 0, holdT = 0;        // plank: locked gap height and seconds held
+  let attract = true;              // demo running behind the intro screen
   const groundH = () => H * GROUND_FRAC;
   const groundTop = () => H - groundH();
   let stateTimer = 0;
@@ -304,8 +305,32 @@
     if (state !== 'ready') { resetRun(); toReady(); }
   }
 
+  // ---------- Attract mode (behind the intro) ----------
+  function updateAttract(dt) {
+    const t = performance.now() / 1000;
+    const speed = W * BASE_SPEED_FRAC * 0.9;
+    const pipeW = Math.min(W, H) * PIPE_W_FRAC;
+    const gap = H * 0.42;
+    groundX += speed * dt;
+    spawnTimer -= dt * 1000;
+    if (spawnTimer <= 0) {
+      spawnTimer = SPAWN_MS * 1.15;
+      pipes.push({ x: W + pipeW, w: pipeW, top: H * 0.5 - gap / 2, bottom: H * 0.5 + gap / 2, passed: false });
+    }
+    for (const p of pipes) p.x -= speed * dt;
+    pipes = pipes.filter((p) => p.x + p.w > -10);
+    const prevY = bird.y;
+    bird.y = H * 0.5 + Math.sin(t * 1.7) * H * 0.11;
+    bird.vy = (bird.y - prevY) / Math.max(dt, 1e-3);
+    bird.rot += (Math.max(-0.5, Math.min(0.9, bird.vy / (H * 1.2))) - bird.rot) * Math.min(1, dt * 10);
+    bird.flapT += dt;
+    bird.squash = Math.max(0, bird.squash - dt * 1.4);
+    updateFx(dt);
+  }
+
   // ---------- Update ----------
   function update(dt) {
+    if (attract) { updateAttract(dt); return; }
     const now = performance.now();
     const seen = now - tracking.lastSeen < POSE_TIMEOUT_MS;
     tracking.hasPose = seen;
@@ -873,11 +898,11 @@
     drawVideo();
     for (const p of pipes) drawPipe(p);
     drawGround();
-    drawTrackingGuide();
+    if (!attract) drawTrackingGuide();
     drawBird();
     if (state === 'over') { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
     drawFx();
-    drawHUD();
+    if (!attract) drawHUD();
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
   }
@@ -931,10 +956,15 @@
     muteBtn.textContent = muted ? '🔇' : '🔊';
   });
 
+  requestAnimationFrame(frame); // the demo runs behind the intro from page load
+
   startBtn.addEventListener('click', async () => {
     ensureAudio();
     intro.hidden = true;
-    requestAnimationFrame(frame);
+    document.body.classList.remove('in-intro');
+    attract = false;
+    resetRun();
+    toReady();
     try {
       await startCamera();
     } catch (err) {

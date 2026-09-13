@@ -21,7 +21,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="in-intro">
   <div id="stage">
     <video id="cam" playsinline muted autoplay></video>
     <canvas id="game"></canvas>
@@ -52,18 +52,43 @@
   </div>
 
   <div id="intro">
-    <div class="card">
-      <h1>FLAPPY REPS</h1>
-      <div class="seg" role="radiogroup" aria-label="exercise">
-        <button type="button" data-mode="pushup">PUSH-UPS</button>
-        <button type="button" data-mode="squat">SQUATS</button>
-        <button type="button" data-mode="plank">PLANK</button>
+    <div class="hero">
+      <div class="hero-top">
+        <img class="hero-bird" src="icons/favicon.svg" alt="" width="88" height="88" />
+        <h1>FLAPPY REPS</h1>
+        <p class="tagline">Flappy Bird, but <b>you</b> are the controller.</p>
       </div>
-      <p id="intro-hint">Get in push-up position facing the camera. The bird follows your <b>shoulders</b>: go down, it drops; push up, it rises.</p>
-      <p>Time each rep to fly through the pipe gap. Every pipe cleared is one rep. Plank is a hold: stay level as long as you can.</p>
-      <button id="start" type="button">ENABLE CAMERA &amp; PLAY</button>
-      <button id="intro-board" type="button" class="secondary">🏆 LEADERBOARD</button>
-      <p class="tiny">No camera? Use ↑ / ↓ keys to move the bird.</p>
+
+      <div class="modes" role="radiogroup" aria-label="exercise">
+        <button type="button" data-mode="pushup">
+          <span class="ico">💪</span>
+          <span class="name">PUSH-UPS</span>
+          <span class="sub">tracks your shoulders</span>
+        </button>
+        <button type="button" data-mode="squat">
+          <span class="ico">🦵</span>
+          <span class="name">SQUATS</span>
+          <span class="sub">tracks your hips</span>
+        </button>
+        <button type="button" data-mode="plank">
+          <span class="ico">🧘</span>
+          <span class="name">PLANK</span>
+          <span class="sub">hold it, score in seconds</span>
+        </button>
+      </div>
+      <p id="intro-hint" class="hint">Phone on the floor, face the camera. Go down and the bird drops, push up and it rises.</p>
+
+      <ol class="steps">
+        <li><b>1</b><span>Allow the camera</span></li>
+        <li><b>2</b><span>Get in position</span></li>
+        <li><b>3</b><span>Every rep flies the bird</span></li>
+      </ol>
+
+      <div class="cta">
+        <button id="start" type="button">▶&nbsp; PLAY</button>
+        <button id="intro-board" type="button" class="secondary">🏆 LEADERBOARD</button>
+      </div>
+      <p class="tiny">Phone or laptop · no account · nothing leaves your browser · ↑ ↓ keys without a camera</p>
     </div>
   </div>
 
