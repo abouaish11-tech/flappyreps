@@ -88,7 +88,9 @@
   let gapFracOverride = null;      // offline rendering: widen the gap for demo footage
   let spawnGate = null;            // offline rendering: () => boolean, may postpone a spawn
   let speedStepOverride = null;    // offline rendering: freeze the speed ramp so pipe timing is predictable
-  const groundH = () => H * GROUND_FRAC;
+  // Offline rendering "raw filter" look: overrides for sizes/timings and a flag that hides all chrome.
+  const tune = { raw: false, birdX: null, spriteScale: 1, pipeW: null, gapFrac: null, spawnMs: null, speedFrac: null, ground: null };
+  const groundH = () => H * (tune.ground ?? GROUND_FRAC);
   const groundTop = () => H - groundH();
   let stateTimer = 0;
   let lastFrame = performance.now();
@@ -139,7 +141,7 @@
     W = w; H = h;
     canvas.width = W; canvas.height = H;
     unit = Math.min(W, H) / 720;
-    bird.x = W * BIRD_X_FRAC;
+    bird.x = W * (tune.birdX ?? BIRD_X_FRAC);
     if (!bird.y) bird.y = H / 2;
   }
   resize(720, 1280);
@@ -150,6 +152,7 @@
   const SRC_PARAM = new URLSearchParams(location.search).get('src');
   let manualPump = false;          // when true, frames are pushed to the tracker by the caller (offline render)
   let frameSource = null;          // offline render: an image/canvas drawn instead of the video element
+  let poseReady = false;           // true once the MediaPipe graph has finished loading
 
   async function startCamera() {
     camPhase = 'starting';
@@ -190,6 +193,7 @@
     pose.onResults(onPose);
     setStatus('loading pose model…');
     await pose.initialize();
+    poseReady = true;
     if (!manualPump) pump();
   }
 
@@ -422,16 +426,16 @@
         }
       }
     }
-    const speed = W * BASE_SPEED_FRAC * speedMult;
-    const pipeW = Math.min(W, H) * PIPE_W_FRAC;
+    const speed = W * (tune.speedFrac ?? BASE_SPEED_FRAC) * speedMult;
+    const pipeW = Math.min(W, H) * (tune.pipeW ?? PIPE_W_FRAC);
     const gap = hold
       ? H * (HOLD_GAP_START + (HOLD_GAP_END - HOLD_GAP_START) * Math.min(1, holdT / HOLD_GAP_SECS))
-      : H * (gapFracOverride ?? GAP_FRAC);
+      : H * (gapFracOverride ?? tune.gapFrac ?? GAP_FRAC);
     groundX += speed * dt;
 
     spawnTimer -= dt * 1000 * speedMult;
     if (spawnTimer <= 0 && (!spawnGate || spawnGate(speed, pipeW, gap))) {
-      spawnTimer = SPAWN_MS;
+      spawnTimer = tune.spawnMs ?? SPAWN_MS;
       const margin = H * 0.08;
       const playH = groundTop();
       let cy = hold
@@ -539,7 +543,7 @@
     if (frameSource || (video.readyState >= 2 && video.videoWidth)) {
       ctx.save();
       ctx.translate(W, 0); ctx.scale(-1, 1); // selfie mirror
-      ctx.filter = 'saturate(0.8) contrast(1.05)';   // lets the pixel art pop over the room
+      if (!tune.raw) ctx.filter = 'saturate(0.8) contrast(1.05)';   // lets the pixel art pop over the room
       ctx.drawImage(frameSource || video, 0, 0, W, H);
       ctx.restore();
     } else {
@@ -555,7 +559,7 @@
       vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
       vignetteKey = key;
     }
-    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+    if (!tune.raw) { ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); }
   }
 
   function drawPipe(p) {
@@ -737,7 +741,7 @@
   }
 
   function blitBird(frame, x, y, rot, sx, sy, alpha) {
-    const px = 3.4 * unit, w = SPR_W * px, h = SPR_H * px;
+    const px = 3.4 * unit * tune.spriteScale, w = SPR_W * px, h = SPR_H * px;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = false;
@@ -915,12 +919,12 @@
     }
     drawVideo();
     for (const p of pipes) drawPipe(p);
-    drawGround();
-    if (!attract) drawTrackingGuide();
+    if (!tune.raw) drawGround();
+    if (!attract && !tune.raw) drawTrackingGuide();
     drawBird();
-    if (state === 'over') { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
-    drawFx();
-    if (!attract) drawHUD();
+    if (state === 'over' && !tune.raw) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
+    if (!tune.raw) drawFx();
+    if (!attract && !tune.raw) drawHUD();
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
   }
@@ -1010,10 +1014,12 @@
         return { y: tracking.targetY, seen: performance.now() - tracking.lastSeen < 200, source: tracking.source };
       },
       get camPhase() { return camPhase; },
+      get poseReady() { return poseReady; },
       setGapHook: (fn) => { gapHook = fn; },
       setGapFrac: (v) => { gapFracOverride = v; },
       setSpawnGate: (fn) => { spawnGate = fn; },
       setSpeedStep: (v) => { speedStepOverride = v; },
+      tune: (o) => { Object.assign(tune, o); bird.x = W * (tune.birdX ?? BIRD_X_FRAC); },
       get birdRadius() { return 20 * unit; },
       get speed() { return W * BASE_SPEED_FRAC * speedMult; },
       addPipe: (x, top, bottom) => pipes.push({ x, w: Math.min(W, H) * PIPE_W_FRAC, top, bottom, passed: false }) } };
