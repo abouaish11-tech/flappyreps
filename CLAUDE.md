@@ -47,3 +47,10 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,
   `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
   recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
+- Run recorder: every countdown starts a `MediaRecorder` on `canvas.captureStream(0)`
+  (frames pushed with `requestFrame()` after each render, sfx routed through a
+  `MediaStreamAudioDestinationNode`). Prefers `video/mp4` (H.264/AAC) and falls back
+  to WebM. Stops 1.8s after game over (runs with score 0 are discarded, clips cap at
+  2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
+  phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
+  ground strip so shared clips carry the URL.

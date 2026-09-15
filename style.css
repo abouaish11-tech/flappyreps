@@ -71,6 +71,52 @@ html, body {
   font-size: 14px;
   cursor: pointer;
 }
+#recdot {
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ff5b5b;
+  animation: blink 1s steps(2, start) infinite;
+  pointer-events: none;
+}
+@keyframes blink { to { visibility: hidden; } }
+
+#sharebar {
+  position: absolute;
+  left: 50%;
+  bottom: max(56px, calc(env(safe-area-inset-bottom) + 56px));
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 8px;
+  background: #ded895;
+  border: 4px solid #3d1c12;
+  box-shadow: 6px 6px 0 #000;
+  max-width: calc(100% - 24px);
+}
+#sharebar[hidden] { display: none; }
+#share {
+  font: 11px/1 var(--font);
+  color: #000;
+  background: var(--accent);
+  border: 0;
+  border-bottom: 4px solid #a8841f;
+  padding: 12px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#share:active { transform: translateY(2px); border-bottom-width: 2px; }
+#share-info { font: 8px/1.4 var(--font); color: #3d1c12; white-space: nowrap; }
+#share-close {
+  font: 12px/1 var(--font);
+  background: transparent;
+  border: 0;
+  color: #3d1c12;
+  cursor: pointer;
+  padding: 6px;
+}
+
 #mode {
   top: auto;
   bottom: max(14px, env(safe-area-inset-bottom));

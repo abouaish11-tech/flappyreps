@@ -124,7 +124,9 @@
     if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(audio.destination);
+    g.connect(audio.destination);
+    if (recDest) g.connect(recDest);
+    o.connect(g);
     o.start(t);
     o.stop(t + dur);
   }
@@ -294,6 +296,79 @@
     stateTimer = 0; // don't auto-start the instant the board closes
   }
 
+  // ---------- Run recorder (records the canvas + sfx, offers Share / Save) ----------
+  const shareBar = document.getElementById('sharebar');
+  const shareBtn = document.getElementById('share');
+  const shareInfo = document.getElementById('share-info');
+  const recDot = document.getElementById('recdot');
+  let recDest = null;              // MediaStreamAudioDestinationNode for the sfx
+  let recorder = null, recChunks = [], recStream = null, recTrack = null, recStart = 0, recStopTimer = null;
+  let lastClip = null;             // { blob, url, ext, seconds, score, mode }
+  const REC_MAX_MS = 120000;       // cap a single clip at two minutes
+  const canRecord = typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream;
+  const recMime = (() => {
+    if (!canRecord) return null;
+    const c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    return c.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  })();
+  const recExt = () => (recMime && recMime.startsWith('video/mp4') ? 'mp4' : 'webm');
+
+  function startRecording() {
+    if (!canRecord || tune.raw) return;
+    stopRecording(true);
+    try {
+      if (!recStream) {
+        recStream = canvas.captureStream(0);          // frames are pushed explicitly after each render
+        recTrack = recStream.getVideoTracks()[0];
+        if (audio) {
+          if (!recDest) recDest = audio.createMediaStreamDestination();
+          recDest.stream.getAudioTracks().forEach((t) => recStream.addTrack(t));
+        }
+      }
+      recChunks = [];
+      recorder = new MediaRecorder(recStream, recMime ? { mimeType: recMime, videoBitsPerSecond: 6_000_000 } : undefined);
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+      recorder.onstop = () => finishClip();
+      recorder.start(1000);
+      recStart = performance.now();
+      recDot.hidden = false;
+      shareBar.hidden = true;
+      clearTimeout(recStopTimer);
+      recStopTimer = setTimeout(() => stopRecording(false), REC_MAX_MS);
+    } catch (err) { console.warn('recording unavailable', err); recorder = null; }
+  }
+  function stopRecording(discard) {
+    clearTimeout(recStopTimer);
+    recDot.hidden = true;
+    if (!recorder) return;
+    const r = recorder; recorder = null;
+    if (discard) { r.onstop = null; r.ondataavailable = null; }
+    if (r.state !== 'inactive') { try { r.stop(); } catch { /* ignore */ } }
+  }
+  function finishClip() {
+    if (!recChunks.length) return;
+    const blob = new Blob(recChunks, { type: recMime || 'video/webm' });
+    if (lastClip) URL.revokeObjectURL(lastClip.url);
+    lastClip = { blob, url: URL.createObjectURL(blob), ext: recExt(), seconds: Math.round((performance.now() - recStart) / 1000), score, mode };
+    shareInfo.textContent = `${fmtScore(mode, score)} · ${lastClip.seconds}s clip`;
+    shareBar.hidden = false;
+  }
+  async function shareClip() {
+    if (!lastClip) return;
+    const name = `flappy-reps-${lastClip.mode}-${lastClip.score}.${lastClip.ext}`;
+    const file = new File([lastClip.blob], name, { type: lastClip.blob.type });
+    const text = `I scored ${fmtScore(lastClip.mode, lastClip.score)} on Flappy Reps (${MODES[lastClip.mode].label.toLowerCase()}). Beat me: https://flappyreps.com`;
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'Flappy Reps', text }); return; }
+      catch (err) { if (err && err.name === 'AbortError') return; }
+    }
+    // Desktop or no share sheet: download the file instead.
+    const a = document.createElement('a');
+    a.href = lastClip.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  }
+  // Push a frame into the recording after every render.
+  function recFrame() { if (recorder && recTrack && recTrack.requestFrame) recTrack.requestFrame(); }
+
   // ---------- Game control ----------
   function resetRun() {
     pipes = [];
@@ -301,7 +376,7 @@
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
   }
-  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); }
+  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); }
   function toPlaying() {
     state = 'playing'; sfx.go();
     holdY = bird.y; holdT = 0; // plank: gaps lock to where the hips are right now
@@ -312,6 +387,8 @@
     if (score > best) { best = score; localStorage.setItem(bestKey(), String(best)); }
     lastRank = recordRun();
     if (boardOpen) renderBoard();
+    // keep the game-over card in the clip, then finish it
+    if (score > 0) setTimeout(() => stopRecording(false), 1800); else stopRecording(true);
   }
   function toReady() { state = 'ready'; stateTimer = 0; }
 
@@ -890,6 +967,14 @@
     text('MATCH THE POSE', W / 2, H * 0.36, 11 * unit);
   }
 
+  function drawWatermark() {
+    // Small site tag so shared clips carry the URL (drawn on the ground strip, right side).
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    text('flappyreps.com', W - 10 * unit, groundTop() + groundH() * 0.55, 9 * unit, { fill: '#3d1c12', stroke: '#ded895', align: 'right' });
+    ctx.restore();
+  }
+
   function drawTrackingGuide() {
     // Plank: the locked hold height the gaps are centred on.
     if (MODES[mode].hold && state === 'playing') {
@@ -927,6 +1012,8 @@
     if (!attract && !tune.raw) drawHUD();
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
+    if (!tune.raw && !attract) drawWatermark();
+    recFrame();
   }
 
   // ---------- Loop ----------
@@ -973,6 +1060,10 @@
     runs = []; saveRuns(); renderBoard();
   });
 
+  shareBtn.addEventListener('click', () => { ensureAudio(); shareClip(); });
+  document.getElementById('share-close').addEventListener('click', () => { shareBar.hidden = true; });
+  if (!canRecord) shareBar.hidden = true;
+
   muteBtn.addEventListener('click', () => {
     muted = !muted;
     muteBtn.textContent = muted ? '🔇' : '🔊';
@@ -997,7 +1088,7 @@
   });
 
   // Expose a little for debugging in the console.
-  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit,
+  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; },
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
     _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
       // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.
