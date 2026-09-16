@@ -412,3 +412,60 @@ body.in-intro #stage .pill { display: none; }
   padding: 4px 0;
 }
 
+/* ---------- paywall ---------- */
+.card.board.pw { text-align: center; }
+.pw-status { font-size: 10px; color: #2f6b1b; margin: 0 0 6px; min-height: 1em; }
+.pw-why { font: 13px/1.5 var(--body); color: #3d1c12; margin: 0 0 12px; }
+.pw-perks {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  text-align: left;
+  font: 13px/1.5 var(--body);
+  color: #3d1c12;
+}
+.pw-perks li::before { content: "✔ "; color: #2f6b1b; font-weight: 700; }
+.pw-buy {
+  width: 100%;
+  font: 12px/1.3 var(--font);
+  color: #000;
+  background: var(--accent);
+  border: 0;
+  border-bottom: 5px solid #a8841f;
+  padding: 16px 12px;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+.pw-buy:active { transform: translateY(2px); border-bottom-width: 3px; }
+.pw-keyrow { display: flex; gap: 8px; }
+.pw-keyrow input {
+  flex: 1;
+  min-width: 0;
+  font: 13px/1 var(--body);
+  padding: 10px;
+  border: 3px solid #3d1c12;
+  background: #fff8d6;
+  color: #3d1c12;
+}
+.pw-keyrow button {
+  font: 9px/1 var(--font);
+  background: #3d1c12;
+  color: #ded895;
+  border: 0;
+  padding: 0 14px;
+  cursor: pointer;
+}
+.pw-msg { font: 12px/1.4 var(--body); color: #b32f1d; min-height: 1.2em; margin: 10px 0 4px; }
+.pw-msg.ok { color: #2f6b1b; }
+.unlocked .pw-perks { display: none; }
+
+/* PRO tag on gated modes */
+.modes button .pro, #mode .pro {
+  font: 7px/1 var(--font);
+  color: #000;
+  background: var(--accent);
+  padding: 3px 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.modes button .pro { margin: 2px 0 0; }

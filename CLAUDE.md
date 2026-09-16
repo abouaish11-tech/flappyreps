@@ -61,3 +61,15 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
   ground strip so shared clips carry the URL.
+- Payment gate (`paywall.js`, loaded before `script.js`, global `Paywall`): OFF by
+  default (`PAYWALL.enabled = false`; `?paywall=1` / `?paywall=0` override per visit).
+  Provider is Lemon Squeezy with no backend: `checkoutUrl` opens the checkout
+  (lemon.js overlay when loaded, else a new tab); keys are verified with the public
+  License API (`/v1/licenses/activate` then `validate`, optional `storeId`/`productId`
+  match) and stored in `pushup-bird-license` (re-validated every `revalidateDays`,
+  `graceDays` offline). `gate` is `'runs'` (`freeRuns` starts per day, counted in
+  `pushup-bird-starts`), `'modes'` (`freeModes` free, others tagged PRO) or `'all'`.
+  `script.js` calls `Paywall.canPlay(mode)` from the intro Play button and the
+  ready→countdown transition, `Paywall.noteStart()` in `toCountdown()`, and
+  `Paywall.isProMode()` for the tags. A `?license_key=` in the URL (Lemon Squeezy
+  redirect placeholder `[license_key]`) activates automatically.

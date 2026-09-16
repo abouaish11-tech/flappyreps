@@ -420,7 +420,7 @@
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
   }
-  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); }
+  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); if (window.Paywall) Paywall.noteStart(); }
   function toPlaying() {
     state = 'playing'; sfx.go();
     holdY = bird.y; holdT = 0; // plank: gaps lock to where the hips are right now
@@ -437,6 +437,18 @@
   }
   function toReady() { state = 'ready'; stateTimer = 0; }
 
+  function updateProTags() {
+    if (!window.Paywall) return;
+    modeButtons.forEach((b) => {
+      const pro = Paywall.isProMode(b.dataset.mode);
+      let tag = b.querySelector('.pro');
+      if (pro && !tag) { tag = document.createElement('span'); tag.className = 'pro'; tag.textContent = 'PRO'; b.appendChild(tag); }
+      if (!pro && tag) tag.remove();
+    });
+    const proPill = Paywall.isProMode(mode);
+    modeBtn.innerHTML = MODES[mode].label + (proPill ? ' <span class="pro">PRO</span>' : '');
+  }
+
   function setMode(next) {
     if (!MODES[next]) return;
     mode = next;
@@ -445,6 +457,8 @@
     best = Number(localStorage.getItem(bestKey()) || 0);
     modeBtn.textContent = MODES[mode].label;
     modeButtons.forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    updateProTags();
+    if (window.Paywall && Paywall.isProMode(mode) && intro.hidden) Paywall.show();
     introHint.innerHTML = MODES[mode].hint;
     if (state !== 'ready') { resetRun(); toReady(); }
   }
@@ -518,10 +532,14 @@
 
     if (state === 'ready') {
       // Hands-free start: once a body is in frame, wait for one visible rep (or a short hold for plank).
-      if ((seen || keyboardY !== null) && !boardOpen) {
+      const pwOpen = !!(window.Paywall && document.getElementById('paywall') && !document.getElementById('paywall').hidden);
+      if ((seen || keyboardY !== null) && !boardOpen && !pwOpen) {
         const hold = !!MODES[mode].hold;
         const calibrated = keyboardY !== null || EXACT || hold || calRange() >= CAL_READY_RANGE;
-        if ((calibrated && stateTimer > 900) || stateTimer > 6000) toCountdown();
+        if ((calibrated && stateTimer > 900) || stateTimer > 6000) {
+          if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); stateTimer = 0; }
+          else toCountdown();
+        }
       } else stateTimer = 0;
       return;
     }
@@ -1122,6 +1140,7 @@
 
   startBtn.addEventListener('click', async () => {
     ensureAudio();
+    if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); return; }
     intro.hidden = true;
     document.body.classList.remove('in-intro');
     attract = false;

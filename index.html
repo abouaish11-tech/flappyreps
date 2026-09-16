@@ -37,6 +37,30 @@
     </div>
   </div>
 
+  <div id="paywall" class="overlay" hidden>
+    <div class="card board pw">
+      <div class="board-head">
+        <h2 class="pw-title">UNLOCK FLAPPY REPS PRO</h2>
+        <button id="pw-close" type="button" aria-label="close">✕</button>
+      </div>
+      <p class="pw-status"></p>
+      <p class="pw-why"></p>
+      <ul class="pw-perks">
+        <li>All three exercises, unlimited runs</li>
+        <li>Clip recording and sharing</li>
+        <li>Future modes and skins included</li>
+        <li>One payment, works on all your devices</li>
+      </ul>
+      <button id="pw-buy" type="button" class="pw-buy">UNLOCK PRO — <span class="pw-price"></span></button>
+      <div class="pw-keyrow">
+        <input id="pw-key" type="text" placeholder="Already bought? Paste your license key" autocomplete="off" spellcheck="false" />
+        <button id="pw-apply" type="button">APPLY</button>
+      </div>
+      <p class="pw-msg"></p>
+      <button id="pw-forget" type="button" class="link" hidden>remove license from this device</button>
+    </div>
+  </div>
+
   <div id="leaderboard" class="overlay" hidden>
     <div class="card board">
       <div class="board-head">
@@ -99,6 +123,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+  <script src="paywall.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
