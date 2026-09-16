@@ -97,7 +97,17 @@
   let muted = false;
 
   // Tracking
-  let tracking = { hasPose: false, targetY: 0.5, lastSeen: 0, source: 'none' };
+  let tracking = { hasPose: false, targetY: 0.5, lastSeen: 0, source: 'none', rawY: 0.5 };
+  // Adaptive range: the joint's observed travel (lo..hi, as a fraction of the frame) is
+  // stretched onto the play area, so a small movement on camera still reaches every gap.
+  const cal = { lo: null, hi: null, lastT: 0, primaryRaw: null, offset: 0, prevSource: null };
+  const CAL_MIN_RANGE = 0.14;      // never amplify more than this (frame fraction → full play height)
+  const CAL_RELAX = 0.03;          // per second: how fast the range forgets old extremes
+  const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
+  const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
+  const HOLD_GAIN = 2.2;           // plank: bird moves this many times the hip movement
+  let holdRaw = 0.5, holdBird = 0.5;
+  const EXACT = new URLSearchParams(location.search).get('exact') === '1';
   let camPhase = 'idle';            // idle | starting | model | ready | failed
   let keyboardY = null;            // set when ↑/↓ are used
 
@@ -185,7 +195,7 @@
       locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}`,
     });
     pose.setOptions({
-      modelComplexity: 0,
+      modelComplexity: Number(new URLSearchParams(location.search).get('model') ?? 0) || 0, // ?model=1 = more accurate, slower
       smoothLandmarks: true,
       enableSegmentation: false,
       selfieMode: true,
@@ -210,21 +220,55 @@
   function onPose(res) {
     const lm = res.poseLandmarks;
     if (!lm) { return; }
-    const vis = (i) => lm[i] && (lm[i].visibility ?? 1) > 0.4;
-    const mid = (a, b) => (lm[a].y + lm[b].y) / 2;
+    const v = (i) => (lm[i] ? (lm[i].visibility ?? 1) : 0);
+    // Average of whichever points of a pair are visible (one hip/shoulder is enough).
+    const pairY = (a, b, th) => { const pts = [a, b].filter((i) => v(i) > th); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
     const [a, b] = MODES[mode].points;
-    let y, source;
-    if (vis(a) && vis(b)) { y = mid(a, b); source = MODES[mode].source; }
-    else if (vis(11) && vis(12)) { y = mid(11, 12); source = 'shoulders'; }
-    else if (lm[0] && (lm[0].visibility ?? 1) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
-    else return;
-    tracking.targetY = Math.min(1, Math.max(0, y));
+    let y = pairY(a, b, 0.5), source = MODES[mode].source;
+    if (y === null) { y = pairY(11, 12, 0.5); source = 'shoulders'; }
+    if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
+    if (y === null) return;
+    feedTracking(y, source);
+  }
+
+  // Shared by the camera path and the offline/debug path.
+  function feedTracking(y, source) {
+    const now = performance.now();
+    const primary = source === MODES[mode].source;
+    // Keep the signal continuous when the tracker falls back to another joint.
+    if (primary) { cal.offset = 0; cal.primaryRaw = y; }
+    else if (cal.prevSource !== source && cal.primaryRaw !== null) cal.offset = cal.primaryRaw - y;
+    cal.prevSource = source;
+    const raw = Math.min(1, Math.max(0, y + cal.offset));
+    tracking.rawY = raw;
+    tracking.targetY = EXACT ? raw : mapRaw(raw, now);
     tracking.hasPose = true;
-    tracking.lastSeen = performance.now();
+    tracking.lastSeen = now;
     tracking.source = source;
     camPhase = 'ready';
     keyboardY = null; // camera takes over from keys
   }
+
+  function mapRaw(raw, now) {
+    const dtp = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
+    cal.lastT = now;
+    if (cal.lo === null) { cal.lo = raw; cal.hi = raw; }
+    // expand instantly, contract slowly
+    cal.lo = Math.min(cal.lo, raw); cal.hi = Math.max(cal.hi, raw);
+    cal.lo += (raw - cal.lo) * CAL_RELAX * dtp;
+    cal.hi += (raw - cal.hi) * CAL_RELAX * dtp;
+    if (MODES[mode].hold && state === 'playing') {
+      // Plank: deviation from the locked position, amplified, around where the bird was locked.
+      return Math.min(1, Math.max(0, holdBird + (raw - holdRaw) * HOLD_GAIN));
+    }
+    const mid = (cal.lo + cal.hi) / 2;
+    const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
+    const norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
+    const bottom = groundTop() / H - 0.08;
+    return PLAY_TOP + norm * (bottom - PLAY_TOP);
+  }
+  const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
+  function resetCal() { cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; }
 
   function setStatus(text, cls = '') {
     statusEl.textContent = text;
@@ -380,6 +424,7 @@
   function toPlaying() {
     state = 'playing'; sfx.go();
     holdY = bird.y; holdT = 0; // plank: gaps lock to where the hips are right now
+    holdRaw = tracking.rawY; holdBird = bird.y / H;
   }
   function toOver() {
     state = 'over'; stateTimer = 0; sfx.hit();
@@ -395,6 +440,7 @@
   function setMode(next) {
     if (!MODES[next]) return;
     mode = next;
+    resetCal();
     localStorage.setItem(MODE_KEY, mode);
     best = Number(localStorage.getItem(bestKey()) || 0);
     modeBtn.textContent = MODES[mode].label;
@@ -471,9 +517,11 @@
     if (state !== 'playing') groundX += W * IDLE_SCROLL_FRAC * dt;
 
     if (state === 'ready') {
-      // Hands-free start: once a body is in frame for a moment, count down.
+      // Hands-free start: once a body is in frame, wait for one visible rep (or a short hold for plank).
       if ((seen || keyboardY !== null) && !boardOpen) {
-        if (stateTimer > 900) toCountdown();
+        const hold = !!MODES[mode].hold;
+        const calibrated = keyboardY !== null || EXACT || hold || calRange() >= CAL_READY_RANGE;
+        if ((calibrated && stateTimer > 900) || stateTimer > 6000) toCountdown();
       } else stateTimer = 0;
       return;
     }
@@ -889,7 +937,8 @@
       const posed = tracking.hasPose || keyboardY !== null;
       if (!posed) drawPoseGuide();
       text('FLAPPY REPS', W / 2, H * 0.18, 34 * unit, { fill: '#f6c948' });
-      text(posed ? 'HOLD STILL…' : MODES[mode].ready, W / 2, H * 0.26, small);
+      const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && calRange() < CAL_READY_RANGE;
+      text(posed ? (needRep ? 'DO ONE FULL REP' : 'HOLD STILL…') : MODES[mode].ready, W / 2, H * 0.26, small);
       text('BEST ' + fmtScore(mode, best), W / 2, H * 0.31, small);
       return;
     }
@@ -1106,6 +1155,9 @@
       },
       get camPhase() { return camPhase; },
       get poseReady() { return poseReady; },
+      feedRaw: (y, source) => feedTracking(y, source || MODES[mode].source),
+      get cal() { return { lo: cal.lo, hi: cal.hi, offset: cal.offset, range: calRange() }; },
+      resetCal,
       setGapHook: (fn) => { gapHook = fn; },
       setGapFrac: (v) => { gapFracOverride = v; },
       setSpawnGate: (fn) => { spawnGate = fn; },

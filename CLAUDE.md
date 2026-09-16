@@ -7,8 +7,15 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
 `.claude/launch.json`).
 
 - Body tracking: MediaPipe Pose (legacy `@mediapipe/pose` from jsDelivr),
-  `modelComplexity: 0`, selfie mode. Bird Y = midpoint of the tracked pair of
-  landmarks, mapped directly onto the canvas (no calibration step).
+  `modelComplexity: 0` (`?model=1` for the heavier model), selfie mode. The tracked
+  joint pair uses whichever of the two points is visible; fallbacks (shoulders, then
+  nose) are offset so the signal stays continuous. `feedTracking()` → `mapRaw()`
+  stretches the joint's observed travel (`cal.lo..cal.hi`, expands instantly, relaxes
+  at `CAL_RELAX`/s, never below `CAL_MIN_RANGE`) onto the play area (`PLAY_TOP` to
+  just above the ground). The ready state asks for one full rep (`CAL_READY_RANGE`)
+  before counting down, or starts after 6 s anyway. Plank ignores the range and moves
+  the bird `HOLD_GAIN` × the hip deviation from the locked position. `?exact=1`
+  restores the old 1:1 mapping.
 - Three exercise modes in the `MODES` table in `script.js`: `pushup` follows the
   shoulders (landmarks 11/12), `squat` and `plank` follow the hips (23/24). All
   fall back to shoulders, then nose. `plank` is a hold mode (`hold: true`): on
