@@ -107,6 +107,13 @@
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
   const HOLD_GAIN = 2.2;           // plank: bird moves this many times the hip movement
   let holdRaw = 0.5, holdBird = 0.5;
+  // Push-ups: depth = half vertical position, half apparent shoulder width (you get bigger
+  // as you come down toward a floor-level phone). A shrug moves y a little but not size.
+  const scale = { lo: null, hi: null, last: null };
+  const SCALE_MIN_RANGE = 0.16;    // shoulder-width change (frame fraction) that counts as a full rep
+  const SCALE_READY_RANGE = 0.08;
+  const reach = { lo: null, hi: null }; // observed bird range (fraction of H) → pipes stay reachable
+  const REACH_MIN = 0.45;          // only constrain gaps once the player has shown this much travel
   const EXACT = new URLSearchParams(location.search).get('exact') === '1';
   let camPhase = 'idle';            // idle | starting | model | ready | failed
   let keyboardY = null;            // set when ↑/↓ are used
@@ -191,6 +198,7 @@
       return;
     }
     camPhase = 'model';
+    if (pose) { if (!manualPump && !pumping) pump(); return; } // already loaded from a previous session
     pose = new Pose({
       locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${f}`,
     });
@@ -209,9 +217,11 @@
     if (!manualPump) pump();
   }
 
+  let pumping = false;
   async function pump() {
+    pumping = true;
     // Feed frames sequentially; pose.send resolves when the frame is processed.
-    if (video.readyState >= 2) {
+    if (video.readyState >= 2 && video.srcObject) {
       try { await pose.send({ image: video }); } catch (e) { /* keep going */ }
     }
     requestAnimationFrame(pump);
@@ -228,12 +238,23 @@
     if (y === null) { y = pairY(11, 12, 0.5); source = 'shoulders'; }
     if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
     if (y === null) return;
-    feedTracking(y, source);
+    // Apparent size: shoulder width, or ear distance scaled up when the shoulders are out of frame.
+    let sw = null;
+    if (v(11) > 0.5 && v(12) > 0.5) sw = Math.abs(lm[11].x - lm[12].x);
+    else if (v(7) > 0.5 && v(8) > 0.5) sw = Math.abs(lm[7].x - lm[8].x) * 3.2;
+    feedTracking(y, source, sw);
   }
 
   // Shared by the camera path and the offline/debug path.
-  function feedTracking(y, source) {
+  function feedTracking(y, source, sw) {
     const now = performance.now();
+    if (typeof sw === 'number' && isFinite(sw)) {
+      if (scale.lo === null) { scale.lo = sw; scale.hi = sw; }
+      scale.lo = Math.min(scale.lo, sw); scale.hi = Math.max(scale.hi, sw);
+      const dts = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
+      scale.lo += (sw - scale.lo) * CAL_RELAX * dts; scale.hi += (sw - scale.hi) * CAL_RELAX * dts;
+      scale.last = sw;
+    }
     const primary = source === MODES[mode].source;
     // Keep the signal continuous when the tracker falls back to another joint.
     if (primary) { cal.offset = 0; cal.primaryRaw = y; }
@@ -263,12 +284,48 @@
     }
     const mid = (cal.lo + cal.hi) / 2;
     const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
-    const norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
+    let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
+    if (mode === 'pushup' && scale.last !== null && !EXACT) {
+      // Blend in depth-by-size. Neither half is stretched below its minimum range, so a
+      // shoulder wiggle on the floor moves the bird a few percent, not the whole screen.
+      const smid = (scale.lo + scale.hi) / 2;
+      const srange = Math.max(scale.hi - scale.lo, SCALE_MIN_RANGE);
+      const snorm = Math.min(1, Math.max(0, (scale.last - smid) / srange + 0.5)); // bigger = lower
+      norm = 0.5 * norm + 0.5 * snorm;
+    }
     const bottom = groundTop() / H - 0.08;
-    return PLAY_TOP + norm * (bottom - PLAY_TOP);
+    const out = PLAY_TOP + norm * (bottom - PLAY_TOP);
+    if (reach.lo === null) { reach.lo = out; reach.hi = out; }
+    reach.lo = Math.min(reach.lo, out); reach.hi = Math.max(reach.hi, out);
+    reach.lo += (out - reach.lo) * CAL_RELAX * dtp; reach.hi += (out - reach.hi) * CAL_RELAX * dtp;
+    return out;
   }
+  const scaleRange = () => (scale.lo === null ? 0 : scale.hi - scale.lo);
+  const calibrated = () => calRange() >= CAL_READY_RANGE && (mode !== 'pushup' || scale.last === null || scaleRange() >= SCALE_READY_RANGE);
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; }
+  function resetCal() { cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; }
+
+  function stopCamera() {
+    if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }
+    camPhase = 'idle';
+    tracking.lastSeen = 0; tracking.hasPose = false;
+  }
+
+  // Quit to the menu: stop the run, drop the clip, release the camera, show the intro.
+  function quitToMenu() {
+    stopRecording(true);
+    resetRun();
+    toReady();
+    resetCal();
+    keyboardY = null;
+    shareBar.hidden = true;
+    closeBoard();
+    stopCamera();
+    attract = true;
+    intro.hidden = false;
+    document.body.classList.add('in-intro');
+    setStatus('starting camera…');
+  }
 
   function setStatus(text, cls = '') {
     statusEl.textContent = text;
@@ -535,8 +592,8 @@
       const pwOpen = !!(window.Paywall && document.getElementById('paywall') && !document.getElementById('paywall').hidden);
       if ((seen || keyboardY !== null) && !boardOpen && !pwOpen) {
         const hold = !!MODES[mode].hold;
-        const calibrated = keyboardY !== null || EXACT || hold || calRange() >= CAL_READY_RANGE;
-        if ((calibrated && stateTimer > 900) || stateTimer > 6000) {
+        const ready = keyboardY !== null || EXACT || hold || calibrated();
+        if ((ready && stateTimer > 900) || stateTimer > 6000) {
           if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); stateTimer = 0; }
           else toCountdown();
         }
@@ -584,6 +641,11 @@
       let cy = hold
         ? Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, holdY))
         : margin + gap / 2 + Math.random() * (playH - 2 * margin - gap);
+      if (!hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
+        // Camera play: keep the gap centre within the range the player has actually reached.
+        const lo = Math.max(margin + gap / 2, reach.lo * H + 10 * unit), hi = Math.min(playH - margin - gap / 2, reach.hi * H - 10 * unit);
+        if (hi > lo) cy = lo + Math.random() * (hi - lo);
+      }
       if (gapHook) cy = Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, gapHook(gap, playH, margin, speed, pipeW)));
       pipes.push({ x: W + pipeW, w: pipeW, top: cy - gap / 2, bottom: cy + gap / 2, passed: false });
     }
@@ -955,7 +1017,7 @@
       const posed = tracking.hasPose || keyboardY !== null;
       if (!posed) drawPoseGuide();
       text('FLAPPY REPS', W / 2, H * 0.18, 34 * unit, { fill: '#f6c948' });
-      const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && calRange() < CAL_READY_RANGE;
+      const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && !calibrated();
       text(posed ? (needRep ? 'DO ONE FULL REP' : 'HOLD STILL…') : MODES[mode].ready, W / 2, H * 0.26, small);
       text('BEST ' + fmtScore(mode, best), W / 2, H * 0.31, small);
       return;
@@ -1103,7 +1165,7 @@
     if (e.key === 'ArrowUp') { nudge(-1); e.preventDefault(); }
     if (e.key === 'ArrowDown') { nudge(1); e.preventDefault(); }
     if (e.key === ' ') { ensureAudio(); if (state === 'over') toReady(); e.preventDefault(); }
-    if (e.key === 'Escape' && boardOpen) closeBoard();
+    if (e.key === 'Escape') { if (boardOpen) closeBoard(); else if (intro.hidden) quitToMenu(); }
     if (e.key === 'l' || e.key === 'L') { boardOpen ? closeBoard() : openBoard(); }
   });
   canvas.addEventListener('pointerdown', () => { ensureAudio(); if (state === 'over') toReady(); });
@@ -1130,6 +1192,8 @@
   shareBtn.addEventListener('click', () => { ensureAudio(); shareClip(); });
   document.getElementById('share-close').addEventListener('click', () => { shareBar.hidden = true; });
   if (!canRecord) shareBar.hidden = true;
+
+  document.getElementById('quit').addEventListener('click', () => { ensureAudio(); quitToMenu(); });
 
   muteBtn.addEventListener('click', () => {
     muted = !muted;
@@ -1174,7 +1238,9 @@
       },
       get camPhase() { return camPhase; },
       get poseReady() { return poseReady; },
-      feedRaw: (y, source) => feedTracking(y, source || MODES[mode].source),
+      feedRaw: (y, source, sw) => feedTracking(y, source || MODES[mode].source, sw),
+      quit: quitToMenu,
+      get reach() { return { ...reach }; }, get scale() { return { ...scale, range: scaleRange() }; },
       get cal() { return { lo: cal.lo, hi: cal.hi, offset: cal.offset, range: calRange() }; },
       resetCal,
       setGapHook: (fn) => { gapHook = fn; },

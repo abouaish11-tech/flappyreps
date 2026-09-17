@@ -15,7 +15,15 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   just above the ground). The ready state asks for one full rep (`CAL_READY_RANGE`)
   before counting down, or starts after 6 s anyway. Plank ignores the range and moves
   the bird `HOLD_GAIN` × the hip deviation from the locked position. `?exact=1`
-  restores the old 1:1 mapping.
+  restores the old 1:1 mapping. Push-ups blend in *depth by size*: apparent shoulder
+  width (ear distance ×3.2 as fallback) with its own range (`scale`, floor
+  `SCALE_MIN_RANGE`) is averaged 50/50 with the vertical signal, so a shrug on the
+  floor barely moves the bird and calibration needs a real size change
+  (`SCALE_READY_RANGE`). Once the player has shown `REACH_MIN` of travel, pipe gaps
+  are spawned inside the observed bird range (`reach`).
+- Quit: the ✕ pill (top-left) or Escape calls `quitToMenu()` — discards the clip,
+  resets the run and calibration, stops the camera tracks, and shows the intro with
+  the attract demo. Play re-requests the camera; the Pose instance is reused.
 - Three exercise modes in the `MODES` table in `script.js`: `pushup` follows the
   shoulders (landmarks 11/12), `squat` and `plank` follow the hips (23/24). All
   fall back to shoulders, then nose. `plank` is a hold mode (`hold: true`): on
