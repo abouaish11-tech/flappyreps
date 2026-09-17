@@ -81,3 +81,6 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   ready→countdown transition, `Paywall.noteStart()` in `toCountdown()`, and
   `Paywall.isProMode()` for the tags. A `?license_key=` in the URL (Lemon Squeezy
   redirect placeholder `[license_key]`) activates automatically.
+- After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the
+  `#againbar` PLAY AGAIN button, a tap on the canvas, or Space restarts sooner (all
+  call `toReady()`, which then runs the normal ready→countdown flow).

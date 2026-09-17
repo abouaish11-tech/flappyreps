@@ -57,7 +57,7 @@
   const SPEED_STEP = 0.035;        // speed multiplier gained per pipe cleared
   const MAX_SPEED_MULT = 2.2;
   const COUNTDOWN_MS = 3000;
-  const OVER_MS = 3200;            // how long the game-over card stays up
+  const OVER_MS = 30000;           // game-over card stays up this long, then restarts on its own
   const POSE_TIMEOUT_MS = 800;     // consider tracking lost after this long
   const GROUND_FRAC = 0.075;       // scrolling ground strip height as a fraction of H
   const IDLE_SCROLL_FRAC = 0.05;   // ground drifts slowly when not playing
@@ -319,6 +319,7 @@
     resetCal();
     keyboardY = null;
     shareBar.hidden = true;
+    againBar.hidden = true;
     closeBoard();
     stopCamera();
     attract = true;
@@ -402,6 +403,8 @@
   const shareBtn = document.getElementById('share');
   const shareInfo = document.getElementById('share-info');
   const recDot = document.getElementById('recdot');
+  const againBar = document.getElementById('againbar');
+  const againTimer = document.getElementById('again-timer');
   let recDest = null;              // MediaStreamAudioDestinationNode for the sfx
   let recorder = null, recChunks = [], recStream = null, recTrack = null, recStart = 0, recStopTimer = null;
   let lastClip = null;             // { blob, url, ext, seconds, score, mode }
@@ -485,6 +488,7 @@
   }
   function toOver() {
     state = 'over'; stateTimer = 0; sfx.hit();
+    againBar.hidden = false;
     onHit();
     if (score > best) { best = score; localStorage.setItem(bestKey(), String(best)); }
     lastRank = recordRun();
@@ -492,7 +496,7 @@
     // keep the game-over card in the clip, then finish it
     if (score > 0) setTimeout(() => stopRecording(false), 1800); else stopRecording(true);
   }
-  function toReady() { state = 'ready'; stateTimer = 0; }
+  function toReady() { state = 'ready'; stateTimer = 0; againBar.hidden = true; }
 
   function updateProTags() {
     if (!window.Paywall) return;
@@ -1041,6 +1045,9 @@
       text(fmtScore(mode, score), W / 2, py0 + ph * 0.48, mid, { fill: '#3d1c12', stroke: '#ded895' });
       const tag = lastRank === 1 && score > 0 ? 'NEW #1!' : lastRank > 0 ? `#${lastRank} ALL-TIME` : 'BEST ' + fmtScore(mode, best);
       text(tag, W / 2, py0 + ph * 0.78, small, { fill: '#3d1c12', stroke: '#ded895' });
+      const left = Math.max(0, Math.ceil((OVER_MS - stateTimer) / 1000));
+      text(`NEXT RUN IN ${left}s · TAP TO GO NOW`, W / 2, py0 + ph + 26 * unit, 9 * unit, { fill: '#fff' });
+      if (againTimer) againTimer.textContent = `auto in ${left}s`;
       return;
     }
   }
@@ -1194,6 +1201,7 @@
   if (!canRecord) shareBar.hidden = true;
 
   document.getElementById('quit').addEventListener('click', () => { ensureAudio(); quitToMenu(); });
+  document.getElementById('again').addEventListener('click', () => { ensureAudio(); if (state === 'over') toReady(); });
 
   muteBtn.addEventListener('click', () => {
     muted = !muted;
