@@ -142,6 +142,7 @@ window.Paywall = (() => {
   }
   function show(reason) {
     if (!el.root) return;
+    if (window.FRAnalytics) FRAnalytics.paywallShown();
     render();
     setMsg(reason || '');
     el.root.hidden = false;

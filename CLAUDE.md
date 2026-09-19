@@ -84,3 +84,8 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the
   `#againbar` PLAY AGAIN button, a tap on the canvas, or Space restarts sooner (all
   call `toReady()`, which then runs the normal ready→countdown flow).
+- Analytics (`analytics.js`, global `FRAnalytics`): GA4 via gtag, OFF until
+  `MEASUREMENT_ID` is set (also off on localhost). Events: `play_start_<mode>`
+  (in `toCountdown`), `run_end_<mode>` with `value` = score (in `toOver`),
+  `clip_share`, `camera_denied`, `paywall_shown`, `quit`. The local dashboard in
+  `../Flappy Reps Dashboard` (http://localhost:4101) reads them through the GA4 API.

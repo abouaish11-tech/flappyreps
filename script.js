@@ -313,6 +313,7 @@
 
   // Quit to the menu: stop the run, drop the clip, release the camera, show the intro.
   function quitToMenu() {
+    if (window.FRAnalytics && intro.hidden) FRAnalytics.quit(mode);
     stopRecording(true);
     resetRun();
     toReady();
@@ -459,6 +460,7 @@
   }
   async function shareClip() {
     if (!lastClip) return;
+    if (window.FRAnalytics) FRAnalytics.clipShare(lastClip.mode, lastClip.score);
     const name = `flappy-reps-${lastClip.mode}-${lastClip.score}.${lastClip.ext}`;
     const file = new File([lastClip.blob], name, { type: lastClip.blob.type });
     const text = `I scored ${fmtScore(lastClip.mode, lastClip.score)} on Flappy Reps (${MODES[lastClip.mode].label.toLowerCase()}). Beat me: https://flappyreps.com`;
@@ -480,7 +482,7 @@
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
   }
-  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); if (window.Paywall) Paywall.noteStart(); }
+  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode); }
   function toPlaying() {
     state = 'playing'; sfx.go();
     holdY = bird.y; holdT = 0; // plank: gaps lock to where the hips are right now
@@ -488,6 +490,7 @@
   }
   function toOver() {
     state = 'over'; stateTimer = 0; sfx.hit();
+    if (window.FRAnalytics) FRAnalytics.runEnd(mode, score);
     againBar.hidden = false;
     onHit();
     if (score > best) { best = score; localStorage.setItem(bestKey(), String(best)); }
@@ -1222,6 +1225,7 @@
       await startCamera();
     } catch (err) {
       console.error(err);
+      if (window.FRAnalytics) FRAnalytics.cameraDenied();
       camPhase = 'failed';
       setStatus('camera blocked — use ↑ ↓ keys', 'bad');
     }
