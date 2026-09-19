@@ -4,7 +4,7 @@
    page views plus the game events below. Nothing personal, no camera data, ever. */
 window.FRAnalytics = (() => {
   'use strict';
-  const MEASUREMENT_ID = '';            // e.g. 'G-ABC123XYZ9'
+  const MEASUREMENT_ID = 'G-NWF62KKXW9'; // GA4 property "Flappy Reps", web stream flappyreps.com
   const enabled = /^G-[A-Z0-9]{6,}$/i.test(MEASUREMENT_ID) && location.hostname !== 'localhost';
   if (enabled) {
     const s = document.createElement('script');
