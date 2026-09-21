@@ -1,34 +1,40 @@
-/* Flappy Reps — payment gate (Lemon Squeezy, no backend).
+/* Flappy Reps — payment gate (Polar, no backend).
    OFF by default. Flip PAYWALL.enabled to true (or open ?paywall=1 to preview) when ready.
+   Currently OFF because the Polar org has no payout account connected yet — turning this on
+   before that step is done would lock every player out with no way to actually pay. Finish
+   "Connect a payout account" at https://polar.sh/dashboard/flappy-reps, then flip enabled: true.
 
-   Setup checklist (see CLAUDE.md):
-     1. In Lemon Squeezy create a product "Flappy Reps Pro" with License Keys enabled.
-     2. Paste its checkout URL into checkoutUrl and the numeric store/product ids below.
-     3. Set the product's redirect URL to  https://flappyreps.com/?license_key=[license_key]
-        so buyers land back in the game already unlocked. Manual key entry also works.
+   How it works: Polar's License Keys benefit is attached to the "Flappy Reps Pro" subscription
+   product. Checkout happens on Polar's hosted page (checkoutUrl below); the buyer sees their
+   license key on Polar's confirmation page and pastes it in here, or looks it up anytime at
+   the customer portal (portalUrl below) by email. Keys are verified with Polar's public
+   Customer Portal API (activate/validate, no auth needed — safe to call from the browser).
+   If the subscription lapses or is cancelled, Polar automatically revokes the key, so
+   revalidate() will get a 404 and re-lock the game within revalidateDays + graceDays.
 */
 window.Paywall = (() => {
   'use strict';
 
   const PAYWALL = {
-    enabled: false,                       // master switch
-    provider: 'lemonsqueezy',
-    checkoutUrl: '',                      // e.g. https://flappyreps.lemonsqueezy.com/buy/xxxxxxxx
-    storeId: 0,                           // optional: reject keys from other stores
-    productId: 0,                         // optional: reject keys from other products
+    enabled: false,                       // master switch — see the note above before flipping this
+    provider: 'polar',
+    checkoutUrl: 'https://buy.polar.sh/polar_cl_Cl9es93tWu4SeXlSCug0WRLW55Y3w7CLEBn6F2MFf4U',
+    portalUrl: 'https://polar.sh/flappy-reps/portal', // "forgot your key?" — customers look it up by email
+    orgId: 'e4541c72-92a0-438a-97bc-f78a40cbc191',     // Polar organization id ("Flappy Reps")
+    productId: '5a037755-d0a1-499a-821f-bcf637ebb3c4', // "Flappy Reps Pro" subscription product
     productName: 'Flappy Reps Pro',
     price: '$4.99',
-    priceNote: 'one-time',
+    priceNote: '/month',
     gate: 'runs',                         // 'runs' | 'modes' | 'all'
-    freeRuns: 3,                          // per day, when gate is 'runs'
+    freeRuns: 1,                          // per day, when gate is 'runs' — one free run, then pay
     freeModes: ['pushup'],                // always free, when gate is 'modes'
-    revalidateDays: 7,                    // re-check the key this often
-    graceDays: 14,                        // keep working offline this long after the last good check
+    revalidateDays: 3,                    // re-check the key this often (billing is monthly)
+    graceDays: 7,                         // keep working offline this long after the last good check
   };
 
   const LS_KEY = 'pushup-bird-license';
   const STARTS_KEY = 'pushup-bird-starts';
-  const API = 'https://api.lemonsqueezy.com/v1/licenses';
+  const API = 'https://api.polar.sh/v1/customer-portal/license-keys';
   const qs = new URLSearchParams(location.search);
   const forced = qs.get('paywall');
   const enabled = () => (forced === '1' ? true : forced === '0' ? false : PAYWALL.enabled);
@@ -59,50 +65,53 @@ window.Paywall = (() => {
   function noteStart() { if (!enabled()) return; const s = starts(); s.count += 1; save(STARTS_KEY, s); }
   function runsLeft() { return Math.max(0, PAYWALL.freeRuns - starts().count); }
 
-  // ---------- license API (public endpoints, safe to call from the browser) ----------
+  // ---------- license API (Polar's public customer-portal endpoints, safe to call from the browser) ----------
   async function post(path, body) {
-    const form = new URLSearchParams(body);
-    const res = await fetch(`${API}/${path}`, { method: 'POST', headers: { Accept: 'application/json' }, body: form });
+    const res = await fetch(`${API}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
     const json = await res.json().catch(() => ({}));
-    return json;
+    return { ok: res.ok, status: res.status, json };
   }
   function deviceName() {
     let id = localStorage.getItem('pushup-bird-device');
     if (!id) { id = 'web-' + Math.random().toString(36).slice(2, 10); localStorage.setItem('pushup-bird-device', id); }
     return id;
   }
-  function accept(json) {
-    if (!json || !json.valid && !json.activated) return false;
-    const meta = json.meta || {};
-    if (PAYWALL.storeId && Number(meta.store_id) !== Number(PAYWALL.storeId)) return false;
-    if (PAYWALL.productId && Number(meta.product_id) !== Number(PAYWALL.productId)) return false;
-    const status = json.license_key && json.license_key.status;
-    return status === 'active' || status === undefined;
-  }
+  // A 200 response already means "valid, granted, belongs to this org" (org_id is in the
+  // request); Polar returns 404 for anything revoked, disabled, expired, or unrecognised.
   async function activate(key) {
     key = String(key || '').trim();
     if (!key) return { ok: false, error: 'Enter your license key.' };
-    let json = await post('activate', { license_key: key, instance_name: deviceName() });
-    if (json.activated && accept(json)) {
-      lic = { key, instanceId: json.instance && json.instance.id, validatedAt: Date.now(), status: 'active' };
+    let r = await post('activate', { key, organization_id: PAYWALL.orgId, label: deviceName() });
+    if (r.ok) {
+      lic = { key, activationId: r.json.id, validatedAt: Date.now(), status: 'active' };
       save(LS_KEY, lic); return { ok: true };
     }
-    // Activation limit reached or already activated elsewhere: fall back to a plain validation.
-    json = await post('validate', { license_key: key });
-    if (json.valid && accept(json)) {
-      lic = { key, instanceId: null, validatedAt: Date.now(), status: 'active' };
+    // Already activated on another device (activation limit) or no limit set: fall back to a plain validation.
+    r = await post('validate', { key, organization_id: PAYWALL.orgId });
+    if (r.ok) {
+      lic = { key, activationId: null, validatedAt: Date.now(), status: 'active' };
       save(LS_KEY, lic); return { ok: true };
     }
-    return { ok: false, error: json.error || 'That key is not valid for Flappy Reps Pro.' };
+    const msg = r.status === 404 ? 'That key is not valid for Flappy Reps Pro.'
+              : r.status === 403 ? 'That key is revoked, expired, or already in use.'
+              : 'Could not verify that key right now — try again in a moment.';
+    return { ok: false, error: msg };
   }
   async function revalidate() {
     if (!lic || !lic.key) return;
     try {
-      const json = await post('validate', lic.instanceId ? { license_key: lic.key, instance_id: lic.instanceId } : { license_key: lic.key });
-      if (json.valid && accept(json)) { lic.validatedAt = Date.now(); lic.status = 'active'; }
-      else if (json.valid === false) { lic.status = 'revoked'; }
+      const body = { key: lic.key, organization_id: PAYWALL.orgId };
+      if (lic.activationId) body.activation_id = lic.activationId;
+      const r = await post('validate', body);
+      if (r.ok) { lic.validatedAt = Date.now(); lic.status = 'active'; }
+      else if (r.status === 404 || r.status === 403) { lic.status = 'revoked'; }
+      // any other status (network hiccup, 5xx): leave lic.validatedAt alone, grace period covers it
       save(LS_KEY, lic);
-    } catch { /* offline: keep within grace period */ }
+    } catch { /* offline: keep working within the grace period */ }
     render();
   }
   function forget() { lic = null; localStorage.removeItem(LS_KEY); render(); }
@@ -110,17 +119,7 @@ window.Paywall = (() => {
   // ---------- checkout ----------
   function openCheckout() {
     if (!PAYWALL.checkoutUrl) { setMsg('Checkout is not configured yet.'); return; }
-    const url = new URL(PAYWALL.checkoutUrl);
-    url.searchParams.set('checkout[custom][device]', deviceName());
-    if (window.LemonSqueezy && window.LemonSqueezy.Url) { window.LemonSqueezy.Url.Open(url.toString()); return; }
-    window.open(url.toString(), '_blank', 'noopener');
-  }
-  function loadLemonJs() {
-    if (PAYWALL.provider !== 'lemonsqueezy' || document.getElementById('lemonjs')) return;
-    const s = document.createElement('script');
-    s.id = 'lemonjs'; s.src = 'https://app.lemonsqueezy.com/js/lemon.js'; s.defer = true;
-    s.onload = () => { if (window.createLemonSqueezy) window.createLemonSqueezy(); };
-    document.head.appendChild(s);
+    window.open(PAYWALL.checkoutUrl, '_blank', 'noopener');
   }
 
   // ---------- UI ----------
@@ -146,7 +145,6 @@ window.Paywall = (() => {
     render();
     setMsg(reason || '');
     el.root.hidden = false;
-    loadLemonJs();
   }
   function hide() { if (el.root) el.root.hidden = true; }
 
@@ -164,6 +162,8 @@ window.Paywall = (() => {
     el.msg = el.root.querySelector('.pw-msg');
     el.close = document.getElementById('pw-close');
     el.forget = document.getElementById('pw-forget');
+    el.portal = document.getElementById('pw-portal');
+    if (el.portal && PAYWALL.portalUrl) el.portal.href = PAYWALL.portalUrl;
     el.buy.addEventListener('click', openCheckout);
     el.apply.addEventListener('click', async () => {
       el.apply.disabled = true; setMsg('Checking…');
@@ -187,7 +187,6 @@ window.Paywall = (() => {
       revalidate();
     }
     render();
-    if (enabled()) loadLemonJs();
   }
   document.addEventListener('DOMContentLoaded', mount);
 

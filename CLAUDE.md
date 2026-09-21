@@ -71,16 +71,26 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   ground strip so shared clips carry the URL.
 - Payment gate (`paywall.js`, loaded before `script.js`, global `Paywall`): OFF by
   default (`PAYWALL.enabled = false`; `?paywall=1` / `?paywall=0` override per visit).
-  Provider is Lemon Squeezy with no backend: `checkoutUrl` opens the checkout
-  (lemon.js overlay when loaded, else a new tab); keys are verified with the public
-  License API (`/v1/licenses/activate` then `validate`, optional `storeId`/`productId`
-  match) and stored in `pushup-bird-license` (re-validated every `revalidateDays`,
-  `graceDays` offline). `gate` is `'runs'` (`freeRuns` starts per day, counted in
+  **Still off in production as of 2026-09-22** because the Polar org has no payout
+  account connected yet (Stripe Connect / identity — the user has to do that step;
+  see [[flappyreps-payments]]). Provider is Polar, org "Flappy Reps"
+  (`orgId` e4541c72-92a0-438a-97bc-f78a40cbc191), product "Flappy Reps Pro"
+  (`productId` 5a037755-d0a1-499a-821f-bcf637ebb3c4, $4.99/month) with a License Keys
+  benefit attached. No backend: `checkoutUrl` opens Polar's hosted checkout in a new
+  tab; keys are verified with Polar's public Customer Portal API
+  (`POST /v1/customer-portal/license-keys/activate` then `/validate`, both take
+  `{key, organization_id}`, no auth) and stored in `pushup-bird-license`
+  (re-validated every `revalidateDays`, `graceDays` offline — short, since billing is
+  monthly and Polar auto-revokes the key on cancellation/payment failure, surfaced as
+  a 404). `gate` is `'runs'` (`freeRuns: 1` — one free run then paywall, counted in
   `pushup-bird-starts`), `'modes'` (`freeModes` free, others tagged PRO) or `'all'`.
   `script.js` calls `Paywall.canPlay(mode)` from the intro Play button and the
   ready→countdown transition, `Paywall.noteStart()` in `toCountdown()`, and
-  `Paywall.isProMode()` for the tags. A `?license_key=` in the URL (Lemon Squeezy
-  redirect placeholder `[license_key]`) activates automatically.
+  `Paywall.isProMode()` for the tags. Polar doesn't put the key in the redirect URL
+  (no Lemon-Squeezy-style placeholder), so buyers copy it from Polar's checkout
+  confirmation page or look it up anytime at `portalUrl`
+  (https://polar.sh/flappy-reps/portal) and paste it into the key field; the
+  `?license_key=` URL param is still handled in case that ever changes.
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the
   `#againbar` PLAY AGAIN button, a tap on the canvas, or Space restarts sooner (all
   call `toReady()`, which then runs the normal ready→countdown flow).
