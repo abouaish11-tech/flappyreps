@@ -1,8 +1,6 @@
 /* Flappy Reps — payment gate (Polar, no backend).
-   OFF by default. Flip PAYWALL.enabled to true (or open ?paywall=1 to preview) when ready.
-   Currently OFF because the Polar org has no payout account connected yet — turning this on
-   before that step is done would lock every player out with no way to actually pay. Finish
-   "Connect a payout account" at https://polar.sh/dashboard/flappy-reps, then flip enabled: true.
+   LIVE as of 2026-09-23 — the Polar org is approved, Stripe payouts connected, identity
+   verified. `?paywall=0` still previews the game with the gate off for one visit.
 
    How it works: Polar's License Keys benefit is attached to the "Flappy Reps Pro" subscription
    product. Checkout happens on Polar's hosted page (checkoutUrl below); the buyer sees their
@@ -16,7 +14,7 @@ window.Paywall = (() => {
   'use strict';
 
   const PAYWALL = {
-    enabled: false,                       // master switch — see the note above before flipping this
+    enabled: true,                        // master switch — live; ?paywall=0 previews it off
     provider: 'polar',
     checkoutUrl: 'https://buy.polar.sh/polar_cl_Cl9es93tWu4SeXlSCug0WRLW55Y3w7CLEBn6F2MFf4U',
     portalUrl: 'https://polar.sh/flappy-reps/portal', // "forgot your key?" — customers look it up by email
