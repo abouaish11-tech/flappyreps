@@ -83,6 +83,8 @@
   let spawnTimer = 0;
   let groundX = 0;                 // scroll offset of the ground strip
   let holdY = 0, holdT = 0;        // plank: locked gap height and seconds held
+  let holdSamples = [];            // plank: raw readings gathered during countdown, for a stable lock-in
+  const median = (arr) => { if (!arr.length) return null; const s = [...arr].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
   let attract = true;              // demo running behind the intro screen
   let gapHook = null;              // offline rendering: (gap, playH, margin, speed) => gap centre
   let gapFracOverride = null;      // offline rendering: widen the gap for demo footage
@@ -270,7 +272,15 @@
     keyboardY = null; // camera takes over from keys
   }
 
-  function mapRaw(raw, now) {
+  function mapRaw(raw, now, pure) {
+    // pure=true (used to compute the plank lock-in anchor): a plain positional read with no
+    // side effects on the shared calibration/reach state, and no amplification.
+    if (MODES[mode].hold) {
+      const bottom = groundTop() / H - 0.08;
+      if (pure || state !== 'playing') return PLAY_TOP + Math.min(1, Math.max(0, raw)) * (bottom - PLAY_TOP);
+      // Playing: deviation from the locked position, amplified, around where the bird was locked.
+      return Math.min(1, Math.max(0, holdBird + (raw - holdRaw) * HOLD_GAIN));
+    }
     const dtp = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
     cal.lastT = now;
     if (cal.lo === null) { cal.lo = raw; cal.hi = raw; }
@@ -278,10 +288,6 @@
     cal.lo = Math.min(cal.lo, raw); cal.hi = Math.max(cal.hi, raw);
     cal.lo += (raw - cal.lo) * CAL_RELAX * dtp;
     cal.hi += (raw - cal.hi) * CAL_RELAX * dtp;
-    if (MODES[mode].hold && state === 'playing') {
-      // Plank: deviation from the locked position, amplified, around where the bird was locked.
-      return Math.min(1, Math.max(0, holdBird + (raw - holdRaw) * HOLD_GAIN));
-    }
     const mid = (cal.lo + cal.hi) / 2;
     const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
     let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
@@ -482,11 +488,16 @@
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
   }
-  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode); }
+  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); holdSamples = []; startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode); }
   function toPlaying() {
     state = 'playing'; sfx.go();
-    holdY = bird.y; holdT = 0; // plank: gaps lock to where the hips are right now
-    holdRaw = tracking.rawY; holdBird = bird.y / H;
+    // Plank: anchor on the median of the last ~0.5s of countdown, not one instantaneous frame —
+    // a single noisy pose reading at the "GO!" instant would otherwise mis-centre every gap.
+    const recent = holdSamples.slice(-15);
+    holdRaw = recent.length ? median(recent) : tracking.rawY;
+    holdBird = mapRaw(holdRaw, performance.now(), true);
+    holdY = holdBird * H; holdT = 0;
+    bird.y = holdY; // snap to the locked anchor so there's no pop on the first playing frame
   }
   function toOver() {
     state = 'over'; stateTimer = 0; sfx.hit();
@@ -608,6 +619,7 @@
       return;
     }
     if (state === 'countdown') {
+      if (MODES[mode].hold && seen) holdSamples.push(tracking.rawY);
       const step = Math.floor(stateTimer / 1000);
       if (step !== countdownStep) { countdownStep = step; if (step < 3) sfx.tick(); }
       if (stateTimer >= COUNTDOWN_MS) { countdownStep = -1; toPlaying(); }
