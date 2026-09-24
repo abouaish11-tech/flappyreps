@@ -133,8 +133,12 @@
     if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
     if (audio.state === 'suspended') audio.resume();
   }
-  function beep(freq, dur, type = 'square', gain = 0.08, slide = 0) {
+  function beep(freq, dur, type = 'square', gain = 0.11, slide = 0) {
     if (muted || !audio) return;
+    // Mobile browsers can silently re-suspend the context (e.g. the OS camera-permission
+    // dialog backgrounds the page for a moment) with no error — sounds scheduled after
+    // that just never play. Nudge it awake before every beep, not only on first unlock.
+    if (audio.state === 'suspended') audio.resume();
     const t = audio.currentTime;
     const o = audio.createOscillator();
     const g = audio.createGain();
@@ -151,11 +155,15 @@
   }
   const sfx = {
     point: () => { beep(880, 0.08); setTimeout(() => beep(1320, 0.12), 70); },
-    hit: () => { beep(220, 0.25, 'sawtooth', 0.12, -160); },
+    hit: () => { beep(220, 0.25, 'sawtooth', 0.17, -160); },
     tick: () => beep(660, 0.07),
     go: () => beep(990, 0.18),
-    milestone: () => { [660, 880, 1100, 1320].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.09), i * 80)); },
+    milestone: () => { [660, 880, 1100, 1320].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.13), i * 80)); },
   };
+  // A backgrounded tab (the OS camera-permission dialog does this on some mobile browsers)
+  // can suspend the audio context; resume it the moment the page is visible again so the
+  // very next beep isn't the one that silently gets dropped.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && audio && audio.state === 'suspended') audio.resume(); });
 
   // ---------- Sizing ----------
   function resize(w, h) {
