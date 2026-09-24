@@ -1,14 +1,20 @@
 /* Flappy Reps — payment gate (Polar, no backend).
    LIVE as of 2026-09-23 — the Polar org is approved, Stripe payouts connected, identity
-   verified. `?paywall=0` still previews the game with the gate off for one visit.
+   verified. Two tiers as of 2026-09-24: a $1.99 one-time 24-hour Day Pass and the original
+   $4.99/month Pro subscription. `?paywall=0` still previews the game with the gate off for
+   one visit.
 
-   How it works: Polar's License Keys benefit is attached to the "Flappy Reps Pro" subscription
-   product. Checkout happens on Polar's hosted page (checkoutUrl below); the buyer sees their
+   How it works: both products share one checkout link (checkoutUrl below) — Polar's hosted
+   checkout page lets the buyer pick either tier there, so this file doesn't need to know
+   which one they choose. Each has its own License Keys benefit; the Day Pass benefit is
+   configured on Polar's side to expire 24 hours after activation, the Pro one doesn't expire
+   on its own (Polar revokes it if the subscription lapses instead). The buyer sees their
    license key on Polar's confirmation page and pastes it in here, or looks it up anytime at
    the customer portal (portalUrl below) by email. Keys are verified with Polar's public
    Customer Portal API (activate/validate, no auth needed — safe to call from the browser).
-   If the subscription lapses or is cancelled, Polar automatically revokes the key, so
-   revalidate() will get a 404 and re-lock the game within revalidateDays + graceDays.
+   Because a key from either tier validates the same way here, revalidateDays is kept at 0
+   (re-check on every page load) so a Day Pass actually re-locks within a day of expiring
+   instead of coasting on the old 3-day/7-day cadence that was tuned for monthly billing only.
 */
 window.Paywall = (() => {
   'use strict';
@@ -19,15 +25,15 @@ window.Paywall = (() => {
     checkoutUrl: 'https://buy.polar.sh/polar_cl_Cl9es93tWu4SeXlSCug0WRLW55Y3w7CLEBn6F2MFf4U',
     portalUrl: 'https://polar.sh/flappy-reps/portal', // "forgot your key?" — customers look it up by email
     orgId: 'e4541c72-92a0-438a-97bc-f78a40cbc191',     // Polar organization id ("Flappy Reps")
-    productId: '5a037755-d0a1-499a-821f-bcf637ebb3c4', // "Flappy Reps Pro" subscription product
-    productName: 'Flappy Reps Pro',
-    price: '$4.99',
-    priceNote: '/month',
+    tiers: [
+      { name: 'Day Pass', price: '$1.99', note: '24 hours', productId: '2778d57c-87c5-4157-88ff-6f6965919b00' },
+      { name: 'Pro', price: '$4.99', note: '/ month', productId: '5a037755-d0a1-499a-821f-bcf637ebb3c4' },
+    ],
     gate: 'runs',                         // 'runs' | 'modes' | 'all'
     freeRuns: 1,                          // per day, when gate is 'runs' — one free run, then pay
     freeModes: ['pushup'],                // always free, when gate is 'modes'
-    revalidateDays: 3,                    // re-check the key this often (billing is monthly)
-    graceDays: 7,                         // keep working offline this long after the last good check
+    revalidateDays: 0,                    // re-check with Polar on every page load
+    graceDays: 2,                         // keep working offline this long after the last good check
   };
 
   const LS_KEY = 'pushup-bird-license';
@@ -94,7 +100,7 @@ window.Paywall = (() => {
       lic = { key, activationId: null, validatedAt: Date.now(), status: 'active' };
       save(LS_KEY, lic); return { ok: true };
     }
-    const msg = r.status === 404 ? 'That key is not valid for Flappy Reps Pro.'
+    const msg = r.status === 404 ? 'That key is not valid for Flappy Reps.'
               : r.status === 403 ? 'That key is revoked, expired, or already in use.'
               : 'Could not verify that key right now — try again in a moment.';
     return { ok: false, error: msg };
@@ -128,8 +134,7 @@ window.Paywall = (() => {
     const u = unlocked();
     el.root.classList.toggle('unlocked', u);
     el.status.textContent = u ? 'PRO UNLOCKED ✓' : '';
-    el.price.textContent = `${PAYWALL.price} · ${PAYWALL.priceNote}`;
-    el.title.textContent = u ? 'YOU\'RE PRO' : `UNLOCK ${PAYWALL.productName.toUpperCase()}`;
+    el.title.textContent = u ? 'YOU\'RE PRO' : 'UNLOCK FLAPPY REPS';
     const why = PAYWALL.gate === 'runs' ? `Free play is ${PAYWALL.freeRuns} runs a day. ${runsLeft()} left today.`
               : PAYWALL.gate === 'modes' ? 'Push-ups are free. Squats and plank are Pro.'
               : 'Flappy Reps is a paid game.';
@@ -151,8 +156,13 @@ window.Paywall = (() => {
     if (!el.root) return;
     el.title = el.root.querySelector('.pw-title');
     el.why = el.root.querySelector('.pw-why');
-    el.price = el.root.querySelector('.pw-price');
     el.status = el.root.querySelector('.pw-status');
+    const tierEls = el.root.querySelectorAll('.pw-tier');
+    PAYWALL.tiers.forEach((t, i) => {
+      if (!tierEls[i]) return;
+      tierEls[i].querySelector('b').textContent = t.price;
+      tierEls[i].querySelector('span').textContent = t.note;
+    });
     el.buy = document.getElementById('pw-buy');
     el.keyRow = el.root.querySelector('.pw-keyrow');
     el.key = document.getElementById('pw-key');
