@@ -986,7 +986,7 @@
     if (!duel.on || duel.oppY === null || (state !== 'playing' && state !== 'over')) return;
     const anchor = MODES[mode].hold ? holdY : 0;
     const target = (duel.oppY - duel.oppA) * H + anchor;
-    duel.showY = duel.showY === null ? target : duel.showY + (target - duel.showY) * 0.35;
+    duel.showY = duel.showY === null ? target : duel.showY + (target - duel.showY) * 0.22; // glides between 6/s updates
     const dead = duel.oppMs !== null;
     const frame = dead ? FR.rivalHit : Math.floor(bird.flapT * 8) % 2 ? FR.rivalUp : FR.rival;
     blitBird(frame, bird.x, duel.showY, dead ? 0.6 : 0, 1, 1, dead ? 0.35 : 0.55);
@@ -1304,8 +1304,9 @@
   // players are set, sending the seed. Everything else is symmetric.
   const DUEL_WIN = 3;
   const DUEL_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  const DUEL_POS_MS = 66;          // send our bird height ~15x a second while playing
-  const DUEL_HELLO_MS = 1000;      // presence + heartbeat (also re-sends our ready flag)
+  const DUEL_POS_MS = 166;         // send our bird height 6x a second while playing (the rival is smoothed);
+                                   // Supabase free plan caps the whole project at 100 messages/s
+  const DUEL_HELLO_MS = 1000;      // heartbeat: carries our full round state, so a dropped message heals
   const DUEL_TIMEOUT_MS = 8000;    // rival counts as gone after this much silence
   const DUEL_NEXT_MS = 4500;       // pause on the result card between rounds
   const DUEL_HOST_KEY = 'pushup-bird-duel-host'; // sessionStorage: code of the duel this tab created
@@ -1331,7 +1332,11 @@
   }
   const duelSend = (type, data = {}) => { if (duel.link) duel.link.send({ t: type, from: duel.id, ...data }); };
   const duelUrl = (code) => `${location.origin}${location.pathname}?duel=${code}`;
-  const duelHello = () => duelSend('hello', { name: playerName, mode, host: duel.host, ready: duel.iReady, round: duel.round });
+  const duelHello = () => duelSend('hello', {
+    name: playerName, mode, host: duel.host, ready: duel.iReady, round: duel.round,
+    seed: duel.host && duel.round ? duel.seed : undefined,   // lets a rival who missed `start` catch up
+    ms: duel.myMs ?? undefined, s: duel.myMs !== null ? score : undefined, // repeats a possibly-lost `dead`
+  });
 
   function duelOpen(code, host) {
     duelClose(true);
@@ -1368,6 +1373,10 @@
       if (m.host && duel.host && m.from < duel.id) duel.host = false;
       if (m.host && !duel.host && MODES[m.mode] && m.mode !== mode) setMode(m.mode, true);
       if (m.round === duel.round) duel.oppReady = !!m.ready;
+      // Heartbeat recovery: a round we never got `start` for, or a result whose `dead` was lost.
+      // (only the very next round: a hello sent just before a rematch reset must not restart an old one)
+      if (m.host && !duel.host && m.round === duel.round + 1 && m.seed !== undefined && !duel.gone) duelBeginRound(m.round, m.seed);
+      else if (m.round === duel.round && m.ms !== undefined && duel.oppMs === null) { duel.oppMs = m.ms; duel.oppScore = m.s || 0; duelResolve(); }
       if (first) {
         duelHello(); // answer right away so both sides see each other
         document.getElementById('duel-mode').textContent = MODES[mode].label;
@@ -1384,7 +1393,7 @@
       duel.oppY = m.y; duel.oppA = m.a || 0;
       if (duel.oppMs === null) duel.oppScore = m.s;
     } else if (m.t === 'dead') {
-      if (m.round !== duel.round) return;
+      if (m.round !== duel.round || duel.oppMs !== null) return;
       duel.oppMs = m.ms; duel.oppScore = m.s;
       duelResolve();
     } else if (m.t === 'rematch') {
@@ -1574,9 +1583,12 @@
   }
 
   // Duel wiring: the intro button creates a room and shows the link; opening that link joins it.
-  // Hidden in production until DuelNet has a backend that reaches other devices.
-  const DUELS_AVAILABLE = window.DuelNet && (DuelNet.live || DUEL_KEYS_OK);
-  document.getElementById('intro-duel').hidden = !DUELS_AVAILABLE;
+  // Soft launch: the button shows only with ?duels=1 (or on localhost) until DUELS_PUBLIC is
+  // flipped; any duel link can always be joined. Needs a transport that reaches other devices.
+  const DUELS_PUBLIC = false;
+  const DUELS_AVAILABLE = !!window.DuelNet && (DuelNet.live || DUEL_KEYS_OK);
+  const DUELS_CREATE = DUELS_AVAILABLE && (DUELS_PUBLIC || DUEL_KEYS_OK || new URLSearchParams(location.search).get('duels') === '1');
+  document.getElementById('intro-duel').hidden = !DUELS_CREATE;
   document.getElementById('intro-duel').addEventListener('click', () => { ensureAudio(); duelOpen(newDuelCode(), true); });
   document.getElementById('duel-join').addEventListener('click', () => { ensureAudio(); duelEnterGame(); });
   document.getElementById('duel-close').addEventListener('click', () => duelClose(false));

@@ -104,18 +104,23 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   seeded per round (the host sends the seed with `start`), and the `reach` gap
   adaptation is off in duels. Only bird height (`y`/H, plus the plank anchor `a`),
   score and round events are sent, never video. Messages: `hello` (presence, name,
-  mode, ready flag; sent by a 1 s timer so it keeps going in a background tab),
-  `ready`, `start`, `pos` (~15/s), `dead` (survival ms), `rematch`, `bye`. The host
+  mode, ready flag, and the round/seed/result so a dropped `start` or `dead` heals; sent
+  by a 1 s timer so it keeps going in a background tab), `ready`, `start`, `pos`
+  (6/s, the rival is smoothed), `dead` (survival ms), `rematch`, `bye`. The host
   starts a round once both are set; a round ends when both crash or as soon as the
   survivor outlasts the rival's time, longer survival wins. Rival is drawn as a blue
   ghost (`drawRival`), the duel scoreboard sits on the ground strip (`drawDuelHUD`;
   the mode pill and watermark are hidden via `body.in-duel`). Duels are free (no
   paywall check, no free-run count, not recorded, not on the local leaderboard). ↑/↓
-  keys work in duels only on localhost. **Not live yet:** `DuelNet` only has the
-  `local` BroadcastChannel backend (tabs of one browser), so `DuelNet.live` is false
-  and the duel button/links are only enabled on localhost. Next step is a Supabase
-  Realtime backend in `duel-net.js` (same `connect/send/close` shape), then ranked
-  play (queue, Glicko-2 rating, tiers, ghost matches when the queue is empty; ranked
+  keys work in duels only on localhost. Transport: Supabase Realtime broadcast on public
+  channel `duel:<code>` (project "flappy-reps", ref kaqclzjfjywgwjfvlgvu, West EU;
+  publishable key in `duel-net.js`; supabase-js lazy-loaded from jsDelivr when a duel
+  opens). `?net=local` swaps in a BroadcastChannel between tabs of one browser. Free
+  plan: 200 concurrent connections and 100 messages/s for the whole project, roughly
+  7 duels at once at the current rates; Pro ($25/mo) is 500/s. **Soft launch:**
+  `DUELS_PUBLIC = false`, so the intro button only shows with `?duels=1` (or on
+  localhost); duel links always work. Flip it to launch. Next: ranked play (Supabase
+  Auth, queue, Glicko-2 rating, tiers, ghost matches when the queue is empty; ranked
   behind the paywall). No global leaderboard (user decision). Test harness:
   `duel-test.html` (gitignored) shows two game iframes linked locally, with an
   arrow-key autopilot `pilot(frame, maxPipes)`.
