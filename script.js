@@ -1368,7 +1368,8 @@
     if (m.t === 'hello') {
       const first = !duel.peer;
       duel.peer = m.from;
-      duel.oppName = String(m.name || 'RIVAL').toUpperCase().slice(0, 12);
+      const nm = String(m.name || '').toUpperCase().slice(0, 12);
+      duel.oppName = nm && nm !== 'YOU' ? nm : 'RIVAL'; // 'YOU' is the unset default; it reads wrong on their side
       // Two tabs can both believe they created the room (shared session storage); one steps down.
       if (m.host && duel.host && m.from < duel.id) duel.host = false;
       if (m.host && !duel.host && MODES[m.mode] && m.mode !== mode) setMode(m.mode, true);
@@ -1382,7 +1383,7 @@
         document.getElementById('duel-mode').textContent = MODES[mode].label;
         if (window.FRAnalytics) FRAnalytics.duel(duel.host ? 'create' : 'join', mode);
         if (duel.host) { duelLobbyStatus(`${duel.oppName} joined!`, true); duelEnterGame(); }
-        else duelLobbyStatus(`${duel.oppName} challenged you — ${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}.`, true);
+        else duelLobbyStatus(`${duel.oppName === 'RIVAL' ? 'A friend' : duel.oppName} challenged you —${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}.`, true);
       }
     } else if (m.t === 'ready') {
       if (m.round === duel.round) duel.oppReady = !!m.ready;
