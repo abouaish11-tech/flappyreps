@@ -69,20 +69,25 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
   ground strip so shared clips carry the URL.
-- Payment gate (`paywall.js`, loaded before `script.js`, global `Paywall`): OFF by
-  default (`PAYWALL.enabled = false`; `?paywall=1` / `?paywall=0` override per visit).
-  **Still off in production as of 2026-09-22** because the Polar org has no payout
-  account connected yet (Stripe Connect / identity — the user has to do that step;
-  see [[flappyreps-payments]]). Provider is Polar, org "Flappy Reps"
-  (`orgId` e4541c72-92a0-438a-97bc-f78a40cbc191), product "Flappy Reps Pro"
-  (`productId` 5a037755-d0a1-499a-821f-bcf637ebb3c4, $4.99/month) with a License Keys
-  benefit attached. No backend: `checkoutUrl` opens Polar's hosted checkout in a new
+- Payment gate (`paywall.js`, loaded before `script.js`, global `Paywall`): LIVE in
+  production. Provider is Polar, org "Flappy Reps" (`orgId`
+  e4541c72-92a0-438a-97bc-f78a40cbc191). Two tiers as of 2026-09-24, both attached to
+  the same checkout link (`PAYWALL.checkoutUrl`, Polar's hosted page lets the buyer
+  pick either there): "Flappy Reps Day Pass" (`productId`
+  2778d57c-87c5-4157-88ff-6f6965919b00, $1.99 one-time, its own License Keys benefit
+  configured on Polar's side to expire 24h after activation) and "Flappy Reps Pro"
+  (`productId` 5a037755-d0a1-499a-821f-bcf637ebb3c4, $4.99/month, License Keys
+  benefit with no fixed expiry — Polar revokes it on cancellation instead). Both
+  tiers are listed in `PAYWALL.tiers` and rendered into the `.pw-tier` boxes in the
+  paywall overlay. No backend: `checkoutUrl` opens Polar's hosted checkout in a new
   tab; keys are verified with Polar's public Customer Portal API
   (`POST /v1/customer-portal/license-keys/activate` then `/validate`, both take
-  `{key, organization_id}`, no auth) and stored in `pushup-bird-license`
-  (re-validated every `revalidateDays`, `graceDays` offline — short, since billing is
-  monthly and Polar auto-revokes the key on cancellation/payment failure, surfaced as
-  a 404). `gate` is `'runs'` (`freeRuns: 1` — one free run then paywall, counted in
+  `{key, organization_id}`, no auth) and stored in `pushup-bird-license`. A key from
+  either tier validates identically here (this file doesn't know which product
+  granted it), so `revalidateDays` is `0` — re-check with Polar on every page load —
+  with a short `graceDays` (2) for offline tolerance, so a Day Pass actually re-locks
+  within about a day instead of riding a grace window sized for monthly billing.
+  `gate` is `'runs'` (`freeRuns: 1` — one free run then paywall, counted in
   `pushup-bird-starts`), `'modes'` (`freeModes` free, others tagged PRO) or `'all'`.
   `script.js` calls `Paywall.canPlay(mode)` from the intro Play button and the
   ready→countdown transition, `Paywall.noteStart()` in `toCountdown()`, and
@@ -91,6 +96,29 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   confirmation page or look it up anytime at `portalUrl`
   (https://polar.sh/flappy-reps/portal) and paste it into the key field; the
   `?license_key=` URL param is still handled in case that ever changes.
+- Duels (1 v 1 over a link, first to `DUEL_WIN` = 3), in the "Duels" section of
+  `script.js` plus `duel-net.js` (global `DuelNet`, the transport). "⚔ DUEL A FRIEND" on the
+  intro creates a 5-char room code and a `?duel=CODE` link; the creator is the host
+  (sessionStorage `pushup-bird-duel-host`) and picks the exercise; opening the link shows
+  the lobby with JOIN. Both get the identical course: pipe gaps come from `duelRand(i)`
+  seeded per round (the host sends the seed with `start`), and the `reach` gap
+  adaptation is off in duels. Only bird height (`y`/H, plus the plank anchor `a`),
+  score and round events are sent, never video. Messages: `hello` (presence, name,
+  mode, ready flag; sent by a 1 s timer so it keeps going in a background tab),
+  `ready`, `start`, `pos` (~15/s), `dead` (survival ms), `rematch`, `bye`. The host
+  starts a round once both are set; a round ends when both crash or as soon as the
+  survivor outlasts the rival's time, longer survival wins. Rival is drawn as a blue
+  ghost (`drawRival`), the duel scoreboard sits on the ground strip (`drawDuelHUD`;
+  the mode pill and watermark are hidden via `body.in-duel`). Duels are free (no
+  paywall check, no free-run count, not recorded, not on the local leaderboard). ↑/↓
+  keys work in duels only on localhost. **Not live yet:** `DuelNet` only has the
+  `local` BroadcastChannel backend (tabs of one browser), so `DuelNet.live` is false
+  and the duel button/links are only enabled on localhost. Next step is a Supabase
+  Realtime backend in `duel-net.js` (same `connect/send/close` shape), then ranked
+  play (queue, Glicko-2 rating, tiers, ghost matches when the queue is empty; ranked
+  behind the paywall). No global leaderboard (user decision). Test harness:
+  `duel-test.html` (gitignored) shows two game iframes linked locally, with an
+  arrow-key autopilot `pilot(frame, maxPipes)`.
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the
   `#againbar` PLAY AGAIN button, a tap on the canvas, or Space restarts sooner (all
   call `toReady()`, which then runs the normal ready→countdown flow).

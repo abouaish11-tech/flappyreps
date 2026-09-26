@@ -328,6 +328,7 @@
   // Quit to the menu: stop the run, drop the clip, release the camera, show the intro.
   function quitToMenu() {
     if (window.FRAnalytics && intro.hidden) FRAnalytics.quit(mode);
+    duelClose(false);
     stopRecording(true);
     resetRun();
     toReady();
@@ -496,9 +497,14 @@
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
   }
-  function toCountdown() { state = 'countdown'; stateTimer = 0; resetRun(); holdSamples = []; startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode); }
+  function toCountdown() {
+    state = 'countdown'; stateTimer = 0; resetRun(); holdSamples = [];
+    if (duel.on) return; // duels are free and aren't recorded as solo runs
+    startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode);
+  }
   function toPlaying() {
     state = 'playing'; sfx.go();
+    duel.goAt = performance.now();
     // Plank: anchor on the median of the last ~0.5s of countdown, not one instantaneous frame —
     // a single noisy pose reading at the "GO!" instant would otherwise mis-centre every gap.
     const recent = holdSamples.slice(-15);
@@ -509,6 +515,7 @@
   }
   function toOver() {
     state = 'over'; stateTimer = 0; sfx.hit();
+    if (duel.on) { onHit(); duelFinishRun(); return; }
     if (window.FRAnalytics) FRAnalytics.runEnd(mode, score);
     againBar.hidden = false;
     onHit();
@@ -532,8 +539,9 @@
     modeBtn.innerHTML = MODES[mode].label + (proPill ? ' <span class="pro">PRO</span>' : '');
   }
 
-  function setMode(next) {
+  function setMode(next, fromDuel) {
     if (!MODES[next]) return;
+    if (duel.on && !fromDuel) return; // the exercise is fixed for the whole duel
     mode = next;
     resetCal();
     localStorage.setItem(MODE_KEY, mode);
@@ -571,8 +579,9 @@
 
   // ---------- Update ----------
   function update(dt) {
-    if (attract) { updateAttract(dt); return; }
     const now = performance.now();
+    if (duel.on) duelTick(now); // heartbeat runs in the lobby too, not just in game
+    if (attract) { updateAttract(dt); return; }
     const seen = now - tracking.lastSeen < POSE_TIMEOUT_MS;
     tracking.hasPose = seen;
 
@@ -620,10 +629,11 @@
         const hold = !!MODES[mode].hold;
         const ready = keyboardY !== null || EXACT || hold || calibrated();
         if ((ready && stateTimer > 900) || stateTimer > 6000) {
-          if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); stateTimer = 0; }
+          if (duel.on) duelSetReady(true); // in a duel the host starts the round once both are set
+          else if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); stateTimer = 0; }
           else toCountdown();
-        }
-      } else stateTimer = 0;
+        } else if (duel.on) duelSetReady(false);
+      } else { stateTimer = 0; if (duel.on) duelSetReady(false); }
       return;
     }
     if (state === 'countdown') {
@@ -634,9 +644,12 @@
       return;
     }
     if (state === 'over') {
+      if (duel.on) { if (duel.nextAt && now >= duel.nextAt) { duel.nextAt = 0; toReady(); } return; }
       if (stateTimer >= OVER_MS) toReady();
       return;
     }
+    // Duel: once the rival has crashed, outlasting them wins the round on the spot.
+    if (duel.on && duel.oppMs !== null && now - duel.goAt > duel.oppMs) { duel.outlasted = true; state = 'over'; stateTimer = 0; duelFinishRun(); return; }
 
     // ---- playing ----
     const hold = !!MODES[mode].hold;
@@ -665,10 +678,12 @@
       spawnTimer = tune.spawnMs ?? SPAWN_MS;
       const margin = H * 0.08;
       const playH = groundTop();
+      // Duels: both players get the identical course, pipe i always has the same gap.
+      const rnd = duel.on ? duelRand(duel.pipeIdx++) : Math.random();
       let cy = hold
         ? Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, holdY))
-        : margin + gap / 2 + Math.random() * (playH - 2 * margin - gap);
-      if (!hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
+        : margin + gap / 2 + rnd * (playH - 2 * margin - gap);
+      if (!duel.on && !hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
         // Camera play: keep the gap centre within the range the player has actually reached.
         const lo = Math.max(margin + gap / 2, reach.lo * H + 10 * unit), hi = Math.min(playH - margin - gap / 2, reach.hi * H - 10 * unit);
         if (hi > lo) cy = lo + Math.random() * (hi - lo);
@@ -960,10 +975,26 @@
   const FR = {
     mid: bakeFrame(MID), up: bakeFrame(UP), down: bakeFrame(DOWN),
     strain: bakeFrame(STRAIN), hit: bakeFrame(HIT, 'rgba(255,70,70,0.35)'),
+    // Duel rival: the same bird tinted blue, drawn as a ghost.
+    rival: bakeFrame(MID, 'rgba(79,195,247,0.6)'), rivalUp: bakeFrame(UP, 'rgba(79,195,247,0.6)'),
+    rivalHit: bakeFrame(HIT, 'rgba(79,195,247,0.6)'),
   };
 
+  // The rival's bird, positioned from their last reported height. Plank gaps are centred on
+  // each player's own hold height, so the rival is drawn relative to our anchor.
+  function drawRival() {
+    if (!duel.on || duel.oppY === null || (state !== 'playing' && state !== 'over')) return;
+    const anchor = MODES[mode].hold ? holdY : 0;
+    const target = (duel.oppY - duel.oppA) * H + anchor;
+    duel.showY = duel.showY === null ? target : duel.showY + (target - duel.showY) * 0.35;
+    const dead = duel.oppMs !== null;
+    const frame = dead ? FR.rivalHit : Math.floor(bird.flapT * 8) % 2 ? FR.rivalUp : FR.rival;
+    blitBird(frame, bird.x, duel.showY, dead ? 0.6 : 0, 1, 1, dead ? 0.35 : 0.55);
+    text(duel.oppName, bird.x, duel.showY - 38 * unit, 8 * unit, { fill: '#4fc3f7' });
+  }
+
   function pickFrame() {
-    if (state === 'over') return FR.hit;
+    if (state === 'over' && !(duel.on && duel.outlasted)) return FR.hit;
     const fast = H * 0.08;
     // Straining: low in the frame (bottom of a rep) and barely moving.
     if (state === 'playing' && bird.y > H * 0.72 && Math.abs(bird.vy) < H * 0.15) return FR.strain;
@@ -1032,6 +1063,7 @@
 
   function drawHUD() {
     const big = 56 * unit, mid = 22 * unit, small = 13 * unit;
+    if (duel.on) { drawDuelHUD(big, mid, small); return; }
     if (state === 'playing') {
       const pop = 1 + 0.45 * fx.scorePop * fx.scorePop;
       ctx.save();
@@ -1072,6 +1104,85 @@
       text(`NEXT RUN IN ${left}s · TAP TO GO NOW`, W / 2, py0 + ph + 26 * unit, 9 * unit, { fill: '#fff' });
       if (againTimer) againTimer.textContent = `auto in ${left}s`;
       return;
+    }
+  }
+
+  function drawDuelHUD(big, mid, small) {
+    // Scoreboard on the ground strip, always visible (and in any recording): YOU 2 – 1 RIVAL.
+    const gy = groundTop() + groundH() * 0.5;
+    text(`${playerName} ${duel.me}`, W / 2 - 14 * unit, gy, 12 * unit, { fill: '#f6c948', align: 'right' });
+    text('–', W / 2, gy, 12 * unit);
+    text(`${duel.them} ${duel.oppName}`, W / 2 + 14 * unit, gy, 12 * unit, { fill: '#4fc3f7', align: 'left' });
+
+    if (duel.gone) {
+      text(`${duel.oppName} LEFT`, W / 2, H * 0.22, mid, { fill: '#e0432b' });
+      text('THE DUEL IS OVER', W / 2, H * 0.29, small);
+      return;
+    }
+    if (state === 'playing') {
+      const pop = 1 + 0.45 * fx.scorePop * fx.scorePop;
+      ctx.save();
+      ctx.translate(W / 2, H * 0.12); ctx.scale(pop, pop);
+      text(fmtScore(mode, score), 0, 0, big);
+      ctx.restore();
+      const oppLine = duel.oppMs !== null ? `${duel.oppName} OUT AT ${fmtScore(mode, duel.oppScore)} — OUTLAST THEM`
+                                          : `${duel.oppName} ${fmtScore(mode, duel.oppScore)}`;
+      text(oppLine, W / 2, H * 0.2, 9 * unit, { fill: '#4fc3f7' });
+      return;
+    }
+    if (state === 'ready') {
+      const posed = tracking.hasPose || keyboardY !== null;
+      if (!posed) drawPoseGuide();
+      if (!duel.peer) {
+        text('WAITING FOR RIVAL…', W / 2, H * 0.2, 16 * unit, { fill: '#f6c948' });
+        text('SEND THEM THE DUEL LINK', W / 2, H * 0.26, 10 * unit);
+        return;
+      }
+      text(`ROUND ${duel.round + 1}`, W / 2, H * 0.17, 30 * unit, { fill: '#f6c948' });
+      text(`FIRST TO ${DUEL_WIN}`, W / 2, H * 0.225, 10 * unit);
+      const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && !calibrated();
+      const mine = posed ? (needRep ? 'DO ONE FULL REP' : 'YOU ARE SET ✓') : MODES[mode].ready;
+      text(mine, W / 2, H * 0.28, small);
+      text(duel.oppReady ? `${duel.oppName} IS SET ✓` : `WAITING FOR ${duel.oppName}…`, W / 2, H * 0.325, 10 * unit, { fill: '#4fc3f7' });
+      return;
+    }
+    if (state === 'countdown') {
+      const n = 3 - Math.floor(stateTimer / 1000);
+      const t = (stateTimer % 1000) / 1000;
+      const punch = 1 + 0.7 * Math.pow(1 - t, 3);
+      ctx.save();
+      ctx.translate(W / 2, H * 0.22); ctx.scale(punch, punch);
+      text(n > 0 ? String(n) : 'GO!', 0, 0, big, { fill: '#f6c948' });
+      ctx.restore();
+      text(`ROUND ${duel.round} · vs ${duel.oppName}`, W / 2, H * 0.12, 10 * unit);
+      return;
+    }
+    if (state === 'over') {
+      const pw = Math.min(W * 0.8, 380 * unit), ph = 150 * unit;
+      const px0 = W / 2 - pw / 2, py0 = H * 0.16;
+      let head, sub;
+      if (duel.matchOver) {
+        head = duel.me > duel.them ? 'YOU WIN THE DUEL!' : `${duel.oppName} WINS`;
+        sub = 'FINAL SCORE';
+      } else if (duel.result) {
+        head = duel.result === 'win' ? 'ROUND WON!' : duel.result === 'lose' ? 'ROUND LOST' : 'DEAD HEAT';
+        sub = `ROUND ${duel.round} · FIRST TO ${DUEL_WIN}`;
+      } else {
+        head = 'YOU\'RE OUT';
+        sub = `${duel.oppName} STILL GOING: ${fmtScore(mode, duel.oppScore)}`;
+      }
+      const win = duel.matchOver ? duel.me > duel.them : duel.result === 'win';
+      text(head, W / 2, py0 - 34 * unit, (head.length > 14 ? 20 : 26) * unit, { fill: win ? '#7ec850' : '#f6c948' });
+      panel(px0, py0, pw, ph);
+      text(sub, W / 2, py0 + ph * 0.22, 9 * unit, { fill: '#e0432b' });
+      text(`${duel.me} – ${duel.them}`, W / 2, py0 + ph * 0.52, 30 * unit, { fill: '#3d1c12', stroke: '#ded895' });
+      const mineStr = `YOU ${fmtScore(mode, score)}`;
+      const theirs = duel.oppMs !== null ? `${duel.oppName} ${fmtScore(mode, duel.oppScore)}` : `${duel.oppName} …`;
+      text(`${mineStr}  ·  ${theirs}`, W / 2, py0 + ph * 0.82, 9 * unit, { fill: '#3d1c12', stroke: '#ded895' });
+      if (duel.nextAt) {
+        const left = Math.max(0, Math.ceil((duel.nextAt - performance.now()) / 1000));
+        text(`NEXT ROUND IN ${left}s`, W / 2, py0 + ph + 26 * unit, 9 * unit);
+      }
     }
   }
 
@@ -1165,13 +1276,14 @@
     for (const p of pipes) drawPipe(p);
     if (!tune.raw) drawGround();
     if (!attract && !tune.raw) drawTrackingGuide();
+    if (!attract) drawRival();
     drawBird();
-    if (state === 'over' && !tune.raw) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
+    if (state === 'over' && !tune.raw && !(duel.on && duel.outlasted)) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
     if (!tune.raw) drawFx();
     if (!attract && !tune.raw) drawHUD();
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
-    if (!tune.raw && !attract) drawWatermark();
+    if (!tune.raw && !attract && !duel.on) drawWatermark(); // the duel scoreboard owns the ground strip
     recFrame();
   }
 
@@ -1184,9 +1296,214 @@
     requestAnimationFrame(frame);
   }
 
+  // ---------- Duels (1 v 1 over a link, first to 3) ----------
+  // Both players get the same seeded course. Only bird height, score and round events cross the
+  // wire (DuelNet), never video. A round ends when both have crashed, or as soon as the survivor
+  // outlasts the one who crashed; longer survival wins it. First to DUEL_WIN rounds takes the duel.
+  // The creator of the link is the host: it picks the exercise and starts each round once both
+  // players are set, sending the seed. Everything else is symmetric.
+  const DUEL_WIN = 3;
+  const DUEL_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const DUEL_POS_MS = 66;          // send our bird height ~15x a second while playing
+  const DUEL_HELLO_MS = 1000;      // presence + heartbeat (also re-sends our ready flag)
+  const DUEL_TIMEOUT_MS = 8000;    // rival counts as gone after this much silence
+  const DUEL_NEXT_MS = 4500;       // pause on the result card between rounds
+  const DUEL_HOST_KEY = 'pushup-bird-duel-host'; // sessionStorage: code of the duel this tab created
+  // ↑/↓ keys stay available in duels only on a dev machine, so two tabs can be tested without a camera.
+  const DUEL_KEYS_OK = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
+  const duelEl = document.getElementById('duel');
+  const duelBar = document.getElementById('duelbar');
+  const duel = {
+    on: false, code: null, host: false, link: null, id: Math.random().toString(36).slice(2, 10),
+    peer: null, oppName: 'RIVAL', lastHeard: 0, lastHello: 0, lastPos: 0,
+    seed: 0, round: 0, me: 0, them: 0, pipeIdx: 0, goAt: 0,
+    iReady: false, oppReady: false,
+    oppY: null, oppA: 0, oppScore: 0, oppMs: null, myMs: null, showY: null,
+    result: null, nextAt: 0, matchOver: false, gone: false,
+  };
+
+  function duelRand(i) {
+    // Deterministic per-pipe random in [0,1) from the round seed (mulberry32 mix).
+    let t = (duel.seed + Math.imul(i + 1, 0x9e3779b9)) >>> 0;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const duelSend = (type, data = {}) => { if (duel.link) duel.link.send({ t: type, from: duel.id, ...data }); };
+  const duelUrl = (code) => `${location.origin}${location.pathname}?duel=${code}`;
+  const duelHello = () => duelSend('hello', { name: playerName, mode, host: duel.host, ready: duel.iReady, round: duel.round });
+
+  function duelOpen(code, host) {
+    duelClose(true);
+    Object.assign(duel, { on: true, code, host, peer: null, oppName: 'RIVAL', lastHeard: 0, lastHello: 0, round: 0, me: 0, them: 0,
+      iReady: false, oppReady: false, result: null, nextAt: 0, matchOver: false, gone: false, oppY: null, oppMs: null, myMs: null });
+    if (host) sessionStorage.setItem(DUEL_HOST_KEY, code);
+    history.replaceState(null, '', `?duel=${code}`);
+    document.body.classList.add('in-duel');
+    duel.link = DuelNet.connect(code, duelOnMessage);
+    document.getElementById('duel-name').value = playerName === 'YOU' ? '' : playerName;
+    document.getElementById('duel-mode').textContent = MODES[mode].label;
+    document.getElementById('duel-link').value = duelUrl(code);
+    document.getElementById('duel-linkrow').hidden = !host;
+    document.getElementById('duel-join').hidden = host;
+    duelLobbyStatus(host ? 'Send this link to your rival:' : 'Looking for the duel…');
+    duelEl.hidden = false;
+    duelHello();
+    duel.hb = setInterval(duelHeartbeat, DUEL_HELLO_MS);
+  }
+  function duelLobbyStatus(msg, ok) {
+    const s = document.getElementById('duel-status');
+    s.textContent = msg; s.className = 'duel-status' + (ok ? ' ok' : '');
+  }
+
+  function duelOnMessage(m) {
+    if (!m || m.from === duel.id || !duel.on) return;
+    if (duel.peer && m.from !== duel.peer) return;   // a duel is two players; ignore anyone else on the code
+    duel.lastHeard = performance.now();
+    if (m.t === 'hello') {
+      const first = !duel.peer;
+      duel.peer = m.from;
+      duel.oppName = String(m.name || 'RIVAL').toUpperCase().slice(0, 12);
+      // Two tabs can both believe they created the room (shared session storage); one steps down.
+      if (m.host && duel.host && m.from < duel.id) duel.host = false;
+      if (m.host && !duel.host && MODES[m.mode] && m.mode !== mode) setMode(m.mode, true);
+      if (m.round === duel.round) duel.oppReady = !!m.ready;
+      if (first) {
+        duelHello(); // answer right away so both sides see each other
+        document.getElementById('duel-mode').textContent = MODES[mode].label;
+        if (window.FRAnalytics) FRAnalytics.duel(duel.host ? 'create' : 'join', mode);
+        if (duel.host) { duelLobbyStatus(`${duel.oppName} joined!`, true); duelEnterGame(); }
+        else duelLobbyStatus(`${duel.oppName} challenged you — ${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}.`, true);
+      }
+    } else if (m.t === 'ready') {
+      if (m.round === duel.round) duel.oppReady = !!m.ready;
+    } else if (m.t === 'start') {
+      if (!duel.host && m.round > duel.round) duelBeginRound(m.round, m.seed);
+    } else if (m.t === 'pos') {
+      if (m.round !== duel.round) return;
+      duel.oppY = m.y; duel.oppA = m.a || 0;
+      if (duel.oppMs === null) duel.oppScore = m.s;
+    } else if (m.t === 'dead') {
+      if (m.round !== duel.round) return;
+      duel.oppMs = m.ms; duel.oppScore = m.s;
+      duelResolve();
+    } else if (m.t === 'rematch') {
+      if (duel.matchOver) duelRematch(false);
+    } else if (m.t === 'bye') {
+      duelGone();
+    }
+  }
+
+  function duelSetReady(r) {
+    if (duel.iReady === r) return;
+    duel.iReady = r;
+    duelSend('ready', { ready: r, round: duel.round });
+  }
+
+  // Presence runs on a timer, not the frame loop: timers keep ticking in a background tab
+  // (e.g. while the host is in a messaging app sending the link), requestAnimationFrame doesn't.
+  function duelHeartbeat() {
+    if (!duel.on) return;
+    duelHello();
+    if (duel.peer && !duel.gone && performance.now() - duel.lastHeard > DUEL_TIMEOUT_MS) { duelSend('bye'); duelGone(); }
+  }
+
+  // Called every frame while a duel is open.
+  function duelTick(now) {
+    if (duel.gone) return;
+    if (state === 'playing' && now - duel.lastPos > DUEL_POS_MS) {
+      duel.lastPos = now;
+      duelSend('pos', { round: duel.round, y: bird.y / H, a: MODES[mode].hold ? holdY / H : 0, s: score });
+    }
+    // Host starts the next round once both players are set.
+    if (duel.host && state === 'ready' && !attract && duel.peer && !duel.matchOver && duel.iReady && duel.oppReady) {
+      const seed = (Math.random() * 4294967296) >>> 0;
+      duelSend('start', { round: duel.round + 1, seed });
+      duelBeginRound(duel.round + 1, seed);
+    }
+  }
+
+  function duelBeginRound(round, seed) {
+    Object.assign(duel, { round, seed, pipeIdx: 0, iReady: false, oppReady: false, oppY: null, showY: null, outlasted: false,
+      oppScore: 0, oppMs: null, myMs: null, result: null, nextAt: 0 });
+    toCountdown();
+  }
+
+  // We crashed, or outlasted a rival who already crashed: report our time and try to settle the round.
+  function duelFinishRun() {
+    if (duel.myMs !== null) return;
+    duel.myMs = Math.round(performance.now() - duel.goAt);
+    duelSend('dead', { round: duel.round, ms: duel.myMs, s: score });
+    duelResolve();
+  }
+
+  function duelResolve() {
+    if (duel.myMs === null || duel.oppMs === null || duel.result) {
+      // Rival is out and we're still flying: nothing to settle yet, the play loop ends the round
+      // the moment we pass their time.
+      return;
+    }
+    duel.result = duel.myMs > duel.oppMs ? 'win' : duel.myMs < duel.oppMs ? 'lose' : 'draw';
+    if (duel.result === 'win') { duel.me += 1; sfx.milestone(); burst(W / 2, H * 0.3, 40, ['#7ec850', '#f7d21c', '#ffffff'], H * 0.6, H * 0.8); }
+    if (duel.result === 'lose') duel.them += 1;
+    if (duel.me >= DUEL_WIN || duel.them >= DUEL_WIN) {
+      duel.matchOver = true;
+      duelBar.hidden = false;
+      if (window.FRAnalytics) FRAnalytics.duel('end', mode);
+    } else {
+      duel.nextAt = performance.now() + DUEL_NEXT_MS;
+    }
+  }
+
+  function duelRematch(announce) {
+    if (announce) duelSend('rematch');
+    Object.assign(duel, { round: 0, me: 0, them: 0, matchOver: false, result: null, nextAt: 0, iReady: false, oppReady: false });
+    duelBar.hidden = true;
+    resetRun();
+    toReady();
+  }
+
+  function duelGone() {
+    if (duel.gone) return;
+    duel.gone = true;
+    duel.nextAt = 0;
+    if (state === 'playing' || state === 'countdown') { resetRun(); state = 'over'; stateTimer = 0; }
+    duelLobbyStatus(`${duel.oppName} left the duel.`);
+    document.getElementById('duel-rematch').hidden = true;
+    duelBar.hidden = false;
+  }
+
+  // Leave the duel entirely (quit, menu, or closing the lobby). `silent` skips the goodbye.
+  function duelClose(silent) {
+    if (!duel.on) return;
+    if (!silent) duelSend('bye');
+    if (duel.link) duel.link.close();
+    clearInterval(duel.hb);
+    duel.link = null; duel.on = false; duel.peer = null;
+    document.body.classList.remove('in-duel');
+    if (sessionStorage.getItem(DUEL_HOST_KEY) === duel.code) sessionStorage.removeItem(DUEL_HOST_KEY);
+    duelEl.hidden = true;
+    duelBar.hidden = true;
+    document.getElementById('duel-rematch').hidden = false;
+    if (new URLSearchParams(location.search).has('duel')) history.replaceState(null, '', location.pathname);
+  }
+
+  // Both players are in: hide the lobby and go to the ready screen with the camera on.
+  function duelEnterGame() {
+    duelEl.hidden = true;
+    if (!intro.hidden) enterGame();
+  }
+
+  function newDuelCode() {
+    let c = '';
+    for (let i = 0; i < 5; i++) c += DUEL_CODE_CHARS[(Math.random() * DUEL_CODE_CHARS.length) | 0];
+    return c;
+  }
+
   // ---------- Input ----------
   function nudge(dir) {
     // Each keydown (including auto-repeat while held) moves the bird one step.
+    if (duel.on && !DUEL_KEYS_OK) return; // duels are body-only
     if (keyboardY === null) keyboardY = bird.y / H;
     keyboardY = Math.min(1, Math.max(0, keyboardY + dir * 0.04));
   }
@@ -1194,11 +1511,11 @@
     if (e.target instanceof HTMLInputElement) { if (e.key === 'Escape') closeBoard(); return; }
     if (e.key === 'ArrowUp') { nudge(-1); e.preventDefault(); }
     if (e.key === 'ArrowDown') { nudge(1); e.preventDefault(); }
-    if (e.key === ' ') { ensureAudio(); if (state === 'over') toReady(); e.preventDefault(); }
+    if (e.key === ' ') { ensureAudio(); if (state === 'over' && !duel.on) toReady(); e.preventDefault(); }
     if (e.key === 'Escape') { if (boardOpen) closeBoard(); else if (intro.hidden) quitToMenu(); }
     if (e.key === 'l' || e.key === 'L') { boardOpen ? closeBoard() : openBoard(); }
   });
-  canvas.addEventListener('pointerdown', () => { ensureAudio(); if (state === 'over') toReady(); });
+  canvas.addEventListener('pointerdown', () => { ensureAudio(); if (state === 'over' && !duel.on) toReady(); });
 
   modeBtn.addEventListener('click', () => setMode(MODE_ORDER[(MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length]));
   modeButtons.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
@@ -1233,9 +1550,14 @@
 
   requestAnimationFrame(frame); // the demo runs behind the intro from page load
 
-  startBtn.addEventListener('click', async () => {
+  startBtn.addEventListener('click', () => {
     ensureAudio();
     if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); return; }
+    enterGame();
+  });
+
+  // Leave the intro for the ready screen and turn the camera on (solo Play, or joining a duel).
+  async function enterGame() {
     intro.hidden = true;
     document.body.classList.remove('in-intro');
     attract = false;
@@ -1249,7 +1571,38 @@
       camPhase = 'failed';
       setStatus('camera blocked — use ↑ ↓ keys', 'bad');
     }
+  }
+
+  // Duel wiring: the intro button creates a room and shows the link; opening that link joins it.
+  // Hidden in production until DuelNet has a backend that reaches other devices.
+  const DUELS_AVAILABLE = window.DuelNet && (DuelNet.live || DUEL_KEYS_OK);
+  document.getElementById('intro-duel').hidden = !DUELS_AVAILABLE;
+  document.getElementById('intro-duel').addEventListener('click', () => { ensureAudio(); duelOpen(newDuelCode(), true); });
+  document.getElementById('duel-join').addEventListener('click', () => { ensureAudio(); duelEnterGame(); });
+  document.getElementById('duel-close').addEventListener('click', () => duelClose(false));
+  document.getElementById('duel-copy').addEventListener('click', async () => {
+    const url = duelUrl(duel.code);
+    const btn = document.getElementById('duel-copy');
+    if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ title: 'Flappy Reps duel', text: `Duel me on Flappy Reps, ${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}:`, url }); return; }
+      catch (err) { if (err && err.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(url); btn.textContent = 'COPIED'; }
+    catch { document.getElementById('duel-link').select(); btn.textContent = 'SELECTED'; }
+    setTimeout(() => { btn.textContent = 'COPY'; }, 1600);
   });
+  document.getElementById('duel-name').addEventListener('input', (e) => {
+    playerName = (e.target.value.trim().toUpperCase() || 'YOU').slice(0, 12);
+    localStorage.setItem(NAME_KEY, playerName);
+  });
+  document.getElementById('duel-rematch').addEventListener('click', () => { ensureAudio(); duelRematch(true); });
+  document.getElementById('duel-menu').addEventListener('click', () => { ensureAudio(); quitToMenu(); });
+  {
+    const code = (new URLSearchParams(location.search).get('duel') || '').toUpperCase();
+    if (DUELS_AVAILABLE && /^[A-Z0-9]{4,8}$/.test(code)) duelOpen(code, sessionStorage.getItem(DUEL_HOST_KEY) === code);
+  }
+  // Tell the rival we left; keep the URL and host flag so a refresh lands back in the same duel.
+  window.addEventListener('pagehide', () => { if (duel.on) duelSend('bye'); });
 
   // Expose a little for debugging in the console.
   window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; },

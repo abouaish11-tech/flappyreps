@@ -108,7 +108,26 @@ html, body {
   box-shadow: 6px 6px 0 #000;
   max-width: 100%;
 }
-#sharebar[hidden], #againbar[hidden] { display: none; }
+#sharebar[hidden], #againbar[hidden], #duelbar[hidden] { display: none; }
+#duelbar {
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  background: #ded895;
+  border: 4px solid #3d1c12;
+  box-shadow: 6px 6px 0 #000;
+}
+#duel-rematch, #duel-menu {
+  font: 12px/1 var(--font);
+  color: #000;
+  border: 0;
+  padding: 12px 16px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#duel-rematch { background: #7ec850; border-bottom: 4px solid #4a9a2a; }
+#duel-menu { background: #cfc88a; border-bottom: 4px solid #8f8950; }
+#duel-rematch:active, #duel-menu:active { transform: translateY(2px); border-bottom-width: 2px; }
 #again {
   font: 12px/1 var(--font);
   color: #000;
@@ -438,6 +457,25 @@ body.in-intro #stage .pill { display: none; }
   padding: 4px 0;
 }
 .link[hidden] { display: none; }
+
+/* ---------- duel lobby ---------- */
+.in-duel #mode { display: none; } /* exercise is fixed for the duel; the ground strip shows the score */
+#duel-close {
+  font: 14px/1 var(--font);
+  background: transparent;
+  border: 0;
+  color: #3d1c12;
+  cursor: pointer;
+}
+.duel-sub { font: 13px/1.5 var(--body); margin: 0 0 14px; }
+.duel-sub b { font: 9px/1 var(--font); }
+.duel-status { font: 13px/1.5 var(--body); margin: 0 0 10px; min-height: 1.5em; }
+.duel-status.ok { color: #2f6b1b; font-weight: 700; }
+#duel-linkrow { margin-bottom: 14px; }
+#duel-linkrow[hidden] { display: none; }
+#duel-link { font-size: 12px; }
+#duel-join[hidden] { display: none; }
+.duel-note { font: 11px/1.5 var(--body); opacity: 0.7; margin: 0; }
 
 /* ---------- paywall ---------- */
 .card.board.pw { text-align: center; }

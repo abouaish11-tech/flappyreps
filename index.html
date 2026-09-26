@@ -36,6 +36,10 @@
         <button id="again" type="button">▶ PLAY AGAIN</button>
         <span id="again-timer"></span>
       </div>
+      <div id="duelbar" hidden>
+        <button id="duel-rematch" type="button">⚔ REMATCH</button>
+        <button id="duel-menu" type="button">MENU</button>
+      </div>
       <div id="sharebar" hidden>
         <button id="share" type="button">📤 SHARE CLIP</button>
         <span id="share-info"></span>
@@ -70,6 +74,26 @@
       <p class="pw-msg"></p>
       <a id="pw-portal" class="link" href="#" target="_blank" rel="noopener">forgot your key? look it up</a>
       <button id="pw-forget" type="button" class="link" hidden>remove license from this device</button>
+    </div>
+  </div>
+
+  <div id="duel" class="overlay" hidden>
+    <div class="card board duel-card">
+      <div class="board-head">
+        <h2>⚔ DUEL</h2>
+        <button id="duel-close" type="button" aria-label="close">✕</button>
+      </div>
+      <p class="duel-sub">1 v 1 · first to 3 rounds · <b id="duel-mode">PUSH-UPS</b></p>
+      <label class="name-row">NAME
+        <input id="duel-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" />
+      </label>
+      <p id="duel-status" class="duel-status">Send this link to your rival:</p>
+      <div id="duel-linkrow" class="pw-keyrow">
+        <input id="duel-link" type="text" readonly />
+        <button id="duel-copy" type="button">COPY</button>
+      </div>
+      <button id="duel-join" type="button" class="pw-buy" hidden>▶ JOIN DUEL</button>
+      <p class="duel-note">Your camera stays on your device. Only your bird's height and score are shared.</p>
     </div>
   </div>
 
@@ -128,6 +152,7 @@
 
       <div class="cta">
         <button id="start" type="button">▶&nbsp; PLAY</button>
+        <button id="intro-duel" type="button" class="secondary">⚔ DUEL A FRIEND</button>
         <button id="intro-board" type="button" class="secondary">🏆 LEADERBOARD</button>
       </div>
       <p class="tiny">Phone or laptop · no account · nothing leaves your browser · ↑ ↓ keys without a camera</p>
@@ -137,6 +162,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
   <script src="analytics.js"></script>
   <script src="paywall.js"></script>
+  <script src="duel-net.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

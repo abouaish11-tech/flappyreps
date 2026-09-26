@@ -27,5 +27,6 @@ window.FRAnalytics = (() => {
     cameraDenied: () => track('camera_denied'),
     paywallShown: () => track('paywall_shown'),
     quit: (mode) => track('quit', { mode }),
+    duel: (what, mode) => track(`duel_${what}`, { mode }), // duel_create, duel_join, duel_end
   };
 })();
