@@ -546,3 +546,40 @@ body.in-intro #stage .pill { display: none; }
   vertical-align: middle;
 }
 .modes button .pro { margin: 2px 0 0; }
+
+/* Crawlable "what is it" + FAQ, below the hero inside the scrolling intro */
+.more {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.more:hover { text-decoration: underline; }
+.about {
+  width: min(560px, 100%);
+  margin-top: 28px;
+  padding: 24px 22px 18px;
+  background: rgba(11, 11, 15, 0.92);
+  border: 3px solid #2c2c38;
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.6;
+  color: #d7dbe8;
+  -webkit-user-select: text;
+  user-select: text;
+  flex-shrink: 0;
+}
+.about h2 {
+  font: 12px/1.5 var(--font);
+  color: var(--accent);
+  margin: 22px 0 10px;
+}
+.about h2:first-child { margin-top: 0; }
+.about h3 { font-size: 15px; color: var(--fg); margin: 16px 0 4px; }
+.about p { margin: 0 0 10px; }
+.about ul { margin: 0 0 10px; padding-left: 20px; }
+.about li { margin-bottom: 6px; }
+.about b { color: var(--fg); }
+.about a { color: var(--accent); }
+.about-links { margin-top: 18px !important; font-size: 13px; }

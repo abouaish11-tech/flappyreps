@@ -132,3 +132,12 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   (in `toCountdown`), `run_end_<mode>` with `value` = score (in `toOver`),
   `clip_share`, `camera_denied`, `paywall_shown`, `quit`. The local dashboard in
   `../Flappy Reps Dashboard` (http://localhost:4101) reads them through the GA4 API.
+- Search / AI-answer visibility (AEO): the intro has a crawlable `#about` section (what it
+  is, modes, privacy, FAQ) below the hero, and `index.html` carries JSON-LD (WebSite,
+  VideoGame/WebApplication with the three price offers, FAQPage). Keep the JSON-LD FAQ text
+  identical to the visible FAQ and the prices in step with `PAYWALL.tiers`. Static landing
+  pages (plain HTML, `pages.css`, no build): `/push-up-game/`, `/squat-game/`,
+  `/plank-game/`, `/faq/`, `/how-it-works/`; their Play buttons link to `/?mode=<mode>`,
+  which `script.js` reads on load. `robots.txt` allows the AI crawlers, `sitemap.xml` lists
+  every page (bump `lastmod` when content changes), `llms.txt` is the plain-text summary.
+  IndexNow key file: `da0ee399fbe2dbe7e66d85e4fcaa9195.txt` at the root.

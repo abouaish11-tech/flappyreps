@@ -73,7 +73,8 @@
   let state = 'ready';             // ready | countdown | playing | over
   let pipes = [];
   let score = 0;
-  let mode = MODES[localStorage.getItem(MODE_KEY)] ? localStorage.getItem(MODE_KEY) : 'pushup';
+  const startMode = new URLSearchParams(location.search).get('mode') || localStorage.getItem(MODE_KEY); // ?mode= from the landing pages
+  let mode = MODES[startMode] ? startMode : 'pushup';
   const bestKey = () => (mode === 'pushup' ? BEST_KEY : `${BEST_KEY}:${mode}`);
   let best = Number(localStorage.getItem(bestKey()) || 0);
   let lastRank = 0;                // all-time rank of the run that just ended

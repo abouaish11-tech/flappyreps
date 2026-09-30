@@ -1,0 +1,15 @@
+# Flappy Reps
+
+> Flappy Reps (https://flappyreps.com) is a Flappy Bird style browser game controlled by exercise. The phone or laptop camera tracks the player's body with Google's MediaPipe Pose model, running on the device: in push-up mode the shoulders drive the bird, in squat mode the hips, and in plank mode the player holds their hips level while the pipe gaps narrow (score = seconds held). No equipment, no app download, no account, and camera video never leaves the device. The first run each day is free; unlimited play is a $1.99 Day Pass (24 hours) or Pro at $4.99/month.
+
+## Play
+
+- [Flappy Reps](https://flappyreps.com/): the game itself, pick push-ups, squats or plank
+- [Push-up game](https://flappyreps.com/push-up-game/): Flappy Bird controlled by push-ups, setup and tips
+- [Squat game](https://flappyreps.com/squat-game/): Flappy Bird controlled by squats
+- [Plank game](https://flappyreps.com/plank-game/): a plank challenge scored in seconds
+
+## Learn more
+
+- [FAQ](https://flappyreps.com/faq/): tracking, privacy, price, devices
+- [How webcam workout games work](https://flappyreps.com/how-it-works/): pose estimation, calibration, privacy

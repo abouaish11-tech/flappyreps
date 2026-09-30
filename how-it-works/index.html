@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0b0f" />
+  <title>How webcam workout games work (and how Flappy Reps uses your camera)</title>
+  <meta name="description" content="How browser-based webcam workout games track your body with pose estimation, what that means for privacy, and how to set up your camera for reliable tracking." />
+  <link rel="canonical" href="https://flappyreps.com/how-it-works/" />
+  <meta property="og:title" content="How webcam workout games work (and how Flappy Reps uses your camera)" />
+  <meta property="og:description" content="How browser-based webcam workout games track your body with pose estimation, what that means for privacy, and how to set up your camera for reliable tracking." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://flappyreps.com/how-it-works/" />
+  <meta property="og:image" content="https://flappyreps.com/icons/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/pages.css" />
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebPage",
+      "@id": "https://flappyreps.com/how-it-works/#page",
+      "url": "https://flappyreps.com/how-it-works/",
+      "name": "How webcam workout games work (and how Flappy Reps uses your camera)",
+      "description": "How browser-based webcam workout games track your body with pose estimation, what that means for privacy, and how to set up your camera for reliable tracking.",
+      "isPartOf": {
+        "@id": "https://flappyreps.com/#website"
+      },
+      "about": {
+        "@id": "https://flappyreps.com/#game"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Flappy Reps",
+          "item": "https://flappyreps.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "How it works",
+          "item": "https://flappyreps.com/how-it-works/"
+        }
+      ]
+    }
+  ]
+}
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="/"><img src="/icons/favicon.svg" alt="" width="36" height="36" />FLAPPY REPS</a>
+      <nav><a href="/push-up-game/">Push-ups</a> <a href="/squat-game/">Squats</a> <a href="/plank-game/">Plank</a> <a href="/faq/">FAQ</a> <a href="/how-it-works/" aria-current="page">How it works</a></nav>
+    </header>
+    <main>
+    <h1>How webcam workout games work</h1>
+    <p class="lead">Webcam workout games turn your body into the controller. No sensor, no wearable: just the camera on your phone or laptop and a pose-estimation model.</p>
+
+    <h2>1. Pose estimation finds your joints</h2>
+    <p>A pose-estimation model looks at each camera frame and returns the positions of body landmarks such as shoulders, elbows, hips and knees. Flappy Reps uses <b>MediaPipe Pose</b>, an open model from Google that runs in the browser fast enough for real-time play on a phone.</p>
+
+    <h2>2. The game turns a joint into a control</h2>
+    <p>The game picks the joint that moves most during the exercise and reads its height:</p>
+    <ul>
+      <li><b>Push-ups:</b> the shoulders go up and down with every rep. Flappy Reps also uses how big your shoulders look to the camera, because on the floor your body moves toward the lens as much as up and down.</li>
+      <li><b>Squats:</b> the hips travel the furthest, so they drive the bird.</li>
+      <li><b>Plank:</b> the hips should not move at all, so the game rewards staying level.</li>
+    </ul>
+
+    <h2>3. Calibration makes it fair</h2>
+    <p>Everyone's range of motion is different. Before a run, Flappy Reps watches one full rep, then stretches your personal range onto the whole screen. A short player doing knee push-ups and a tall athlete doing full push-ups get the same control.</p>
+
+    <h2>4. Privacy: it all runs on your device</h2>
+    <p>Because the model runs in the browser, the video does not need to go anywhere. In Flappy Reps, <b>camera frames never leave your phone or laptop</b>. There is no account and no upload.</p>
+
+    <div class="box">
+      <h3 style="margin-top:0">Tips for reliable tracking</h3>
+      <ul>
+        <li>Light from the front or the side, not a bright window behind you.</li>
+        <li>Keep the joint that matters (shoulders or hips) clearly in frame.</li>
+        <li>Clothes that contrast with the wall or floor.</li>
+        <li>A steady camera. Lean the phone against something solid.</li>
+      </ul>
+    </div>
+
+    <h2>Try it</h2>
+    <p>Flappy Reps is a Flappy Bird style game built this way, with <a href="/push-up-game/">push-up</a>, <a href="/squat-game/">squat</a> and <a href="/plank-game/">plank</a> modes.</p>
+    <a class="play" href="/">▶ PLAY FLAPPY REPS</a>
+    </main>
+    <footer>
+      <p><a href="/">Flappy Reps</a> is a browser game where push-ups, squats and planks fly the bird. Your camera video never leaves your device.</p>
+    </footer>
+  </div>
+  <script src="/analytics.js"></script>
+</body>
+</html>
