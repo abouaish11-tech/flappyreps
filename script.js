@@ -100,12 +100,13 @@
   let muted = false;
 
   // Tracking
-  let tracking = { hasPose: false, targetY: 0.5, lastSeen: 0, source: 'none', rawY: 0.5 };
+  let tracking = { hasPose: false, targetY: 0.5, lastSeen: 0, source: 'none', rawY: 0.5, pts: [] };
   // Adaptive range: the joint's observed travel (lo..hi, as a fraction of the frame) is
   // stretched onto the play area, so a small movement on camera still reaches every gap.
   const cal = { lo: null, hi: null, lastT: 0, primaryRaw: null, offset: 0, prevSource: null };
   const CAL_MIN_RANGE = 0.14;      // never amplify more than this (frame fraction → full play height)
-  const CAL_RELAX = 0.03;          // per second: how fast the range forgets old extremes
+  const CAL_RELAX_FREE = 0.03;     // per second: how fast the range forgets old extremes
+  const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
   const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
   const HOLD_GAIN = 2.2;           // plank: bird moves this many times the hip movement
@@ -117,6 +118,25 @@
   const SCALE_READY_RANGE = 0.08;
   let earRatio = 3.2, earRatioSeen = false;   // shoulder width ÷ ear distance, learned per player
   const reach = { lo: null, hi: null }; // observed bird range (fraction of H) → pipes stay reachable
+  // Calibration: before the first countdown the player does CALIB_REPS full reps with the right
+  // joint in view. Each rep must swing the bird from the top zone to the bottom zone and back.
+  const CALIB_REPS = 2;
+  const calib = { zone: null, halves: 0, done: false, samples: [] };
+  // Whether the shoulders look bigger or smaller at the bottom depends on where the phone sits
+  // (in our test footage they look *smaller*), so the size cue is only blended in once the
+  // calibration reps show it moves together with the height signal, and with the right sign.
+  const sizeUse = { w: 0, sign: 1 };
+  function learnSizeCue() {
+    const S = calib.samples; sizeUse.w = 0;
+    if (S.length < 20) return;
+    const n = S.length, my = S.reduce((a, p) => a + p[0], 0) / n, ms = S.reduce((a, p) => a + p[1], 0) / n;
+    let cov = 0, vy = 0, vs = 0;
+    for (const [y, sw] of S) { cov += (y - my) * (sw - ms); vy += (y - my) ** 2; vs += (sw - ms) ** 2; }
+    const r = vy && vs ? cov / Math.sqrt(vy * vs) : 0;
+    if (Math.abs(r) > 0.7) { sizeUse.w = 0.35; sizeUse.sign = Math.sign(r); }
+  }
+  const calRelax = () => (calib.done ? CAL_RELAX_LOCKED : CAL_RELAX_FREE);
+  const calibReps = () => Math.min(CALIB_REPS, Math.floor(calib.halves / 2));
   const REACH_MIN = 0.45;          // only constrain gaps once the player has shown this much travel
   const EXACT = new URLSearchParams(location.search).get('exact') === '1';
   let camPhase = 'idle';            // idle | starting | model | ready | failed
@@ -177,6 +197,19 @@
   }
   resize(720, 1280);
 
+  // Portrait ⇄ landscape: the camera's frame size flips, so the canvas follows it. Pipes and the
+  // bird are rescaled so a run carries on, and the height range is re-learned on the next rep
+  // (the calibration reps themselves aren't asked for again).
+  function onVideoResize() {
+    const nw = video.videoWidth, nh = video.videoHeight;
+    if (!nw || !nh || (nw === W && nh === H)) return;
+    const sx = nw / W, sy = nh / H;
+    resize(nw, nh);
+    for (const p of pipes) { p.x *= sx; p.w = Math.min(W, H) * PIPE_W_FRAC; p.top *= sy; p.bottom *= sy; }
+    bird.x = W * (tune.birdX ?? BIRD_X_FRAC); bird.y *= sy; bird.trail = [];
+    cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
+  }
+
   // ---------- Pose ----------
   let pose = null;
   // Dev/demo: ?src=<video url> feeds a video file through the tracker instead of the webcam.
@@ -203,6 +236,7 @@
       await video.play();
     }
     resize(video.videoWidth, video.videoHeight);
+    if (!video.__rotWatch) { video.__rotWatch = true; video.addEventListener('resize', onVideoResize); }
 
     if (typeof Pose === 'undefined') {
       camPhase = 'failed';
@@ -246,6 +280,7 @@
     // Average of whichever points of a pair are visible (one hip/shoulder is enough).
     const pairY = (a, b, th) => { const pts = [a, b].filter((i) => v(i) > th); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
     const [a, b] = MODES[mode].points;
+    tracking.pts = [a, b].filter((i) => v(i) > 0.5).map((i) => ({ x: lm[i].x, y: lm[i].y }));
     let y = pairY(a, b, 0.5), source = MODES[mode].source;
     if (y === null) { y = pairY(11, 12, 0.5); source = 'shoulders'; }
     if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
@@ -272,10 +307,11 @@
       if (scale.lo === null) { scale.lo = sw; scale.hi = sw; }
       scale.lo = Math.min(scale.lo, sw); scale.hi = Math.max(scale.hi, sw);
       const dts = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
-      scale.lo += (sw - scale.lo) * CAL_RELAX * dts; scale.hi += (sw - scale.hi) * CAL_RELAX * dts;
+      scale.lo += (sw - scale.lo) * calRelax() * dts; scale.hi += (sw - scale.hi) * calRelax() * dts;
       scale.last = sw;
     }
     const primary = source === MODES[mode].source;
+    if (!calib.done && primary && typeof sw === 'number' && isFinite(sw) && calib.samples.length < 900) calib.samples.push([y, sw]);
     // Keep the signal continuous when the tracker falls back to another joint.
     if (primary) { cal.offset = 0; cal.primaryRaw = y; }
     else if (cal.prevSource !== source && cal.primaryRaw !== null) cal.offset = cal.primaryRaw - y;
@@ -304,30 +340,50 @@
     if (cal.lo === null) { cal.lo = raw; cal.hi = raw; }
     // expand instantly, contract slowly
     cal.lo = Math.min(cal.lo, raw); cal.hi = Math.max(cal.hi, raw);
-    cal.lo += (raw - cal.lo) * CAL_RELAX * dtp;
-    cal.hi += (raw - cal.hi) * CAL_RELAX * dtp;
+    cal.lo += (raw - cal.lo) * calRelax() * dtp;
+    cal.hi += (raw - cal.hi) * calRelax() * dtp;
     const mid = (cal.lo + cal.hi) / 2;
     const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
     let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
-    if (mode === 'pushup' && scale.last !== null && !EXACT) {
+    if (mode === 'pushup' && scale.last !== null && !EXACT && sizeUse.w > 0) {
       // Blend in depth-by-size. Neither half is stretched below its minimum range, so a
       // shoulder wiggle on the floor moves the bird a few percent, not the whole screen.
       const smid = (scale.lo + scale.hi) / 2;
       const srange = Math.max(scale.hi - scale.lo, SCALE_MIN_RANGE);
-      const snorm = Math.min(1, Math.max(0, (scale.last - smid) / srange + 0.5)); // bigger = lower
-      norm = 0.5 * norm + 0.5 * snorm;
+      let snorm = Math.min(1, Math.max(0, (scale.last - smid) / srange + 0.5)); // bigger = lower…
+      if (sizeUse.sign < 0) snorm = 1 - snorm;                                   // …unless calibration says smaller = lower
+      norm = (1 - sizeUse.w) * norm + sizeUse.w * snorm;
     }
     const bottom = groundTop() / H - 0.08;
     const out = PLAY_TOP + norm * (bottom - PLAY_TOP);
     if (reach.lo === null) { reach.lo = out; reach.hi = out; }
     reach.lo = Math.min(reach.lo, out); reach.hi = Math.max(reach.hi, out);
-    reach.lo += (out - reach.lo) * CAL_RELAX * dtp; reach.hi += (out - reach.hi) * CAL_RELAX * dtp;
+    reach.lo += (out - reach.lo) * calRelax() * dtp; reach.hi += (out - reach.hi) * calRelax() * dtp;
     return out;
   }
   const scaleRange = () => (scale.lo === null ? 0 : scale.hi - scale.lo);
-  const calibrated = () => calRange() >= CAL_READY_RANGE && (mode !== 'pushup' || scale.last === null || scaleRange() >= SCALE_READY_RANGE);
+  const calibrated = () => calib.done;
+  // Called every frame in the ready state while the camera sees the player.
+  function stepCalib() {
+    if (calib.done || tracking.source !== MODES[mode].source) return;  // needs the real joint, not a fallback
+    const bottom = groundTop() / H - 0.08;
+    const n = (tracking.targetY - PLAY_TOP) / (bottom - PLAY_TOP);
+    // The range must also be a real movement, not a twitch amplified to full height.
+    const big = calRange() >= CAL_READY_RANGE;
+    const zone = !big ? calib.zone : n > 0.72 ? 'low' : n < 0.28 ? 'high' : calib.zone;
+    if (zone && zone !== calib.zone) {
+      if (calib.zone) { calib.halves++; if (calib.halves % 2 === 0) sfx.point(); }
+      calib.zone = zone;
+      if (calibReps() >= CALIB_REPS) { calib.done = true; learnSizeCue(); }
+    }
+  }
+  function calibText() {                 // [headline, instruction]
+    if (tracking.source !== MODES[mode].source) return ['MOVE BACK', mode === 'pushup' ? 'SHOW BOTH SHOULDERS' : 'SHOW YOUR HIPS'];
+    const word = mode === 'pushup' ? 'PUSH-UP' : 'SQUAT';
+    return [`CALIBRATE ${word} ${Math.min(CALIB_REPS, calibReps() + 1)}/${CALIB_REPS}`, calib.zone === 'low' ? 'NOW COME ALL THE WAY UP' : 'GO ALL THE WAY DOWN'];
+  }
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; }
+  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; }
 
   function stopCamera() {
     if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }
@@ -436,9 +492,27 @@
   let lastClip = null;             // { blob, url, ext, seconds, score, mode }
   const REC_MAX_MS = 120000;       // cap a single clip at two minutes
   const REC_FPS = 30;
-  const canRecord = typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream;
+  // Safari's MediaRecorder writes MP4s whose timestamps collapse (a 40 s run plays as ~3 s and
+  // reports an "83 day" length). On Apple browsers we encode the canvas ourselves with WebCodecs
+  // and mux a normal MP4 with mp4-muxer, stamping every frame with its real time. ?rec=wc forces
+  // that path anywhere (for testing), ?rec=mr forces MediaRecorder.
+  const REC_FORCE = new URLSearchParams(location.search).get('rec');
+  const IS_APPLE = navigator.vendor === 'Apple Computer, Inc.';
+  const WC_POSSIBLE = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+  const WC_WANTED = REC_FORCE === 'wc' || (REC_FORCE !== 'mr' && IS_APPLE);
+  const WC_CODEC = 'avc1.42002a';  // H.264 baseline, level 4.2 (fits up to 1080p)
+  const WC_MUXER_SRC = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.js';
+  let wcReady = false, wc = null;
+  if (WC_POSSIBLE && WC_WANTED) {
+    VideoEncoder.isConfigSupported({ codec: WC_CODEC, width: 720, height: 1280, bitrate: 4_000_000, framerate: REC_FPS })
+      .then((r) => r.supported && (window.Mp4Muxer ? null : new Promise((ok, bad) => {
+        const sc = document.createElement('script'); sc.src = WC_MUXER_SRC; sc.onload = ok; sc.onerror = bad; document.head.appendChild(sc);
+      })).then(() => { wcReady = !!window.Mp4Muxer; }))
+      .catch((e) => console.warn('webcodecs recorder unavailable', e));
+  }
+  const canRecord = (typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream) || (WC_POSSIBLE && WC_WANTED);
   const recMime = (() => {
-    if (!canRecord) return null;
+    if (typeof MediaRecorder === 'undefined') return null;
     const c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     return c.find((m) => MediaRecorder.isTypeSupported(m)) || '';
   })();
@@ -447,13 +521,16 @@
   function startRecording() {
     if (!canRecord || tune.raw) return;
     stopRecording(true);
+    if (wcReady) { startWebCodecs(); return; }
+    if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return;
     try {
       if (!recStream) {
-        // A fixed capture rate lets the browser stamp frames itself. Pushing frames by hand with
-        // captureStream(0) + requestFrame() gave Safari broken timestamps (clip froze after ~4s).
+        // A fixed capture rate lets the browser stamp frames itself.
         recStream = canvas.captureStream(REC_FPS);
         recTrack = recStream.getVideoTracks()[0];
-        if (audio) {
+        // Game sound only off Apple: Safari's muxer follows the audio clock and squashes the video
+        // when that track stalls (e.g. iOS interrupts the AudioContext while the camera runs).
+        if (audio && !IS_APPLE) {
           if (!recDest) recDest = audio.createMediaStreamDestination();
           recDest.stream.getAudioTracks().forEach((t) => recStream.addTrack(t));
         }
@@ -461,28 +538,54 @@
       recChunks = [];
       recorder = new MediaRecorder(recStream, recMime ? { mimeType: recMime, videoBitsPerSecond: 4_000_000 } : undefined);
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
-      recorder.onstop = () => finishClip();
+      recorder.onstop = () => { if (recChunks.length) finishClip(new Blob(recChunks, { type: recMime || 'video/webm' }), recExt()); };
       recorder.start();                               // one blob at stop; Safari mangles timesliced MP4 chunks
-      recStart = performance.now();
-      recDot.hidden = false;
-      shareBar.hidden = true;
-      clearTimeout(recStopTimer);
-      recStopTimer = setTimeout(() => stopRecording(false), REC_MAX_MS);
+      recStarted();
     } catch (err) { console.warn('recording unavailable', err); recorder = null; }
+  }
+  function startWebCodecs() {
+    try {
+      const w = W & ~1, h = H & ~1;
+      const target = new Mp4Muxer.ArrayBufferTarget();
+      const muxer = new Mp4Muxer.Muxer({ target, video: { codec: 'avc', width: w, height: h, frameRate: REC_FPS }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+      const rec = { muxer, target, w, h, next: 0, n: 0, failed: false, enc: null };
+      rec.enc = new VideoEncoder({
+        output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch (e) { rec.failed = true; console.warn(e); } },
+        error: (e) => { rec.failed = true; console.warn('encoder error', e); },
+      });
+      rec.enc.configure({ codec: WC_CODEC, width: w, height: h, bitrate: 4_000_000, framerate: REC_FPS, avc: { format: 'avc' } });
+      wc = rec;
+      recStarted();
+    } catch (err) { console.warn('webcodecs recording failed', err); wc = null; }
+  }
+  function recStarted() {
+    recStart = performance.now();
+    recDot.hidden = false;
+    shareBar.hidden = true;
+    clearTimeout(recStopTimer);
+    recStopTimer = setTimeout(() => stopRecording(false), REC_MAX_MS);
   }
   function stopRecording(discard) {
     clearTimeout(recStopTimer);
     recDot.hidden = true;
+    if (wc) {
+      const r = wc; wc = null;
+      if (discard || r.failed || !r.n) { try { r.enc.close(); } catch { /* ignore */ } return; }
+      r.enc.flush().then(() => {
+        r.muxer.finalize();
+        try { r.enc.close(); } catch { /* ignore */ }
+        if (!r.failed) finishClip(new Blob([r.target.buffer], { type: 'video/mp4' }), 'mp4');
+      }).catch((e) => console.warn('finishing clip failed', e));
+      return;
+    }
     if (!recorder) return;
     const r = recorder; recorder = null;
     if (discard) { r.onstop = null; r.ondataavailable = null; }
     if (r.state !== 'inactive') { try { r.stop(); } catch { /* ignore */ } }
   }
-  function finishClip() {
-    if (!recChunks.length) return;
-    const blob = new Blob(recChunks, { type: recMime || 'video/webm' });
+  function finishClip(blob, ext) {
     if (lastClip) URL.revokeObjectURL(lastClip.url);
-    lastClip = { blob, url: URL.createObjectURL(blob), ext: recExt(), seconds: Math.round((performance.now() - recStart) / 1000), score, mode };
+    lastClip = { blob, url: URL.createObjectURL(blob), ext, seconds: Math.round((performance.now() - recStart) / 1000), score, mode };
     shareInfo.textContent = `${fmtScore(mode, score)} · ${lastClip.seconds}s clip`;
     shareBar.hidden = false;
   }
@@ -501,7 +604,27 @@
     a.href = lastClip.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   }
   // Push a frame into the recording after every render.
-  function recFrame() { /* frames are sampled by captureStream(REC_FPS); nothing to push */ }
+  // WebCodecs path: encode the freshly rendered canvas at REC_FPS with its real timestamp.
+  function recFrame() {
+    if (!wc || wc.failed) return;
+    const t = performance.now() - recStart;
+    if (t < wc.next) return;
+    wc.next = t + 1000 / REC_FPS - 2;
+    if (wc.enc.encodeQueueSize > 4) return;          // encoder behind: drop this frame
+    try {
+      let src = canvas;
+      if ((W & ~1) !== wc.w || (H & ~1) !== wc.h) {   // phone rotated mid-run: letterbox into the clip's size
+        if (!wc.off) { wc.off = document.createElement('canvas'); wc.off.width = wc.w; wc.off.height = wc.h; }
+        const o = wc.off.getContext('2d'), k = Math.min(wc.w / W, wc.h / H);
+        o.fillStyle = '#000'; o.fillRect(0, 0, wc.w, wc.h);
+        o.drawImage(canvas, (wc.w - W * k) / 2, (wc.h - H * k) / 2, W * k, H * k);
+        src = wc.off;
+      }
+      const frame = new VideoFrame(src, { timestamp: Math.round(t * 1000), visibleRect: { x: 0, y: 0, width: wc.w, height: wc.h } });
+      wc.enc.encode(frame, { keyFrame: wc.n % (REC_FPS * 2) === 0 });
+      frame.close(); wc.n++;
+    } catch (e) { wc.failed = true; console.warn('frame encode failed', e); }
+  }
 
   // ---------- Game control ----------
   function resetRun() {
@@ -640,8 +763,9 @@
       const pwOpen = !!(window.Paywall && document.getElementById('paywall') && !document.getElementById('paywall').hidden);
       if ((seen || keyboardY !== null) && !boardOpen && !pwOpen) {
         const hold = !!MODES[mode].hold;
+        if (seen && keyboardY === null && !hold && !EXACT) stepCalib();
         const ready = keyboardY !== null || EXACT || hold || calibrated();
-        if ((ready && stateTimer > 900) || stateTimer > 6000) {
+        if (ready && stateTimer > 900) {
           if (duel.on) duelSetReady(true); // in a duel the host starts the round once both are set
           else if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); stateTimer = 0; }
           else toCountdown();
@@ -1090,8 +1214,13 @@
       if (!posed) drawPoseGuide();
       text('FLAPPY REPS', W / 2, H * 0.18, 34 * unit, { fill: '#f6c948' });
       const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && !calibrated();
-      text(posed ? (needRep ? 'DO ONE FULL REP' : 'HOLD STILL…') : MODES[mode].ready, W / 2, H * 0.26, small);
-      text('BEST ' + fmtScore(mode, best), W / 2, H * 0.31, small);
+      if (needRep) {
+        const [head, step] = calibText();
+        text(head, W / 2, H * 0.255, 16 * unit, { fill: '#7ec850' });
+        text(step, W / 2, H * 0.3, small);
+        if (stateTimer > 20000) text('PHONE ~1 M AWAY, HEAD + SHOULDERS IN VIEW', W / 2, H * 0.345, 9 * unit, { fill: '#f6c948' });
+      } else text(posed ? 'HOLD STILL…' : MODES[mode].ready, W / 2, H * 0.26, small);
+      text('BEST ' + fmtScore(mode, best), W / 2, H * (needRep ? 0.39 : 0.31), small);
       return;
     }
     if (state === 'countdown') {
@@ -1154,7 +1283,7 @@
       text(`ROUND ${duel.round + 1}`, W / 2, H * 0.17, 30 * unit, { fill: '#f6c948' });
       text(`FIRST TO ${DUEL_WIN}`, W / 2, H * 0.225, 10 * unit);
       const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && !calibrated();
-      const mine = posed ? (needRep ? 'DO ONE FULL REP' : 'YOU ARE SET ✓') : MODES[mode].ready;
+      const mine = posed ? (needRep ? calibText().join(' · ') : 'YOU ARE SET ✓') : MODES[mode].ready;
       text(mine, W / 2, H * 0.28, small);
       text(duel.oppReady ? `${duel.oppName} IS SET ✓` : `WAITING FOR ${duel.oppName}…`, W / 2, H * 0.325, 10 * unit, { fill: '#4fc3f7' });
       return;
@@ -1270,6 +1399,30 @@
     }
     // Thin horizontal line showing the tracked joint height, for feedback.
     if (!tracking.hasPose || state === 'over') return;
+    const seenNow = performance.now() - tracking.lastSeen < POSE_TIMEOUT_MS;
+    if (state === 'ready' && seenNow) {
+      // Show exactly what the camera is tracking: a dot on each detected shoulder/hip.
+      const ok = tracking.source === MODES[mode].source;
+      ctx.save();
+      ctx.fillStyle = ok ? 'rgba(126,200,80,0.95)' : 'rgba(246,201,72,0.95)';
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * unit;
+      for (const p of tracking.pts) { ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 11 * unit, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      if (tracking.pts.length === 2) { ctx.beginPath(); ctx.moveTo(tracking.pts[0].x * W, tracking.pts[0].y * H); ctx.lineTo(tracking.pts[1].x * W, tracking.pts[1].y * H); ctx.stroke(); }
+      ctx.restore();
+      // Calibration targets: the bird has to reach both bands for a rep to count.
+      if (!calib.done && keyboardY === null && !EXACT && !MODES[mode].hold) {
+        const bottom = groundTop() / H - 0.08, yAt = (n) => (PLAY_TOP + n * (bottom - PLAY_TOP)) * H;
+        ctx.save();
+        for (const [n0, n1, lab, on] of [[0, 0.28, 'UP', calib.zone === 'high'], [0.72, 1, 'DOWN', calib.zone === 'low']]) {
+          ctx.fillStyle = on ? 'rgba(126,200,80,0.22)' : 'rgba(255,255,255,0.10)';
+          ctx.fillRect(0, yAt(n0), W, yAt(n1) - yAt(n0));
+          ctx.font = `${10 * unit}px ${getComputedStyle(document.body).getPropertyValue('--font') || 'monospace'}`;
+          ctx.fillStyle = on ? 'rgba(126,200,80,0.95)' : 'rgba(255,255,255,0.7)';
+          ctx.textAlign = 'right'; ctx.fillText(lab, W - 12 * unit, (yAt(n0) + yAt(n1)) / 2);
+        }
+        ctx.restore();
+      }
+    }
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.35)';
     ctx.setLineDash([6 * unit, 6 * unit]);
@@ -1631,7 +1784,7 @@
   window.addEventListener('pagehide', () => { if (duel.on) duelSend('bye'); });
 
   // Expose a little for debugging in the console.
-  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; },
+  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse,
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
     _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
       // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.

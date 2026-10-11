@@ -4,7 +4,7 @@
   "description": "Flappy Bird, but you are the controller. Push-ups, squats and planks fly the bird through the pipes.",
   "start_url": "/",
   "display": "fullscreen",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#0b0b0f",
   "theme_color": "#0b0b0f",
   "icons": [

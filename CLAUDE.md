@@ -12,14 +12,25 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   nose) are offset so the signal stays continuous. `feedTracking()` → `mapRaw()`
   stretches the joint's observed travel (`cal.lo..cal.hi`, expands instantly, relaxes
   at `CAL_RELAX`/s, never below `CAL_MIN_RANGE`) onto the play area (`PLAY_TOP` to
-  just above the ground). The ready state asks for one full rep (`CAL_READY_RANGE`)
-  before counting down, or starts after 6 s anyway. Plank ignores the range and moves
+  just above the ground). Calibration: before the first countdown the player does
+  `CALIB_REPS` (2) full reps with the primary joint in view (`stepCalib()`: the bird must
+  reach the top and bottom zones, shown as bands, and the travel must be ≥ `CAL_READY_RANGE`);
+  there is no timeout for camera play. Tracked joints are drawn as dots in the ready state,
+  and the prompt says "MOVE BACK" while the tracker is on a fallback joint. After
+  calibration the range relaxes much slower (`CAL_RELAX_LOCKED`). `resetCal()` (quit to
+  menu) asks for the calibration reps again. Plank ignores the range and moves
   the bird `HOLD_GAIN` × the hip deviation from the locked position. `?exact=1`
-  restores the old 1:1 mapping. Push-ups blend in *depth by size*: apparent shoulder
-  width (ear distance ×3.2 as fallback) with its own range (`scale`, floor
-  `SCALE_MIN_RANGE`) is averaged 50/50 with the vertical signal, so a shrug on the
-  floor barely moves the bird and calibration needs a real size change
-  (`SCALE_READY_RANGE`). Once the player has shown `REACH_MIN` of travel, pipe gaps
+  restores the old 1:1 mapping. Push-ups can blend in *depth by size* (apparent shoulder
+  width, or ear distance × a per-player ratio learned when both are visible), but only if
+  the calibration reps show size moving with height (|r| > 0.7, `learnSizeCue()`), at
+  weight 0.35 and with the learned sign. In the stock test clip (phone on the floor in
+  front) the shoulders look *smaller* at the bottom, so the old fixed "bigger = lower"
+  50/50 blend cancelled the height signal and the bird barely moved.
+- Orientation: portrait and landscape both work (manifest `orientation: any`). The canvas
+  follows the camera frame; `onVideoResize()` rescales pipes/bird mid-run and resets the
+  height range (calibration reps are not asked for again).
+- Script/style tags in `index.html` carry `?v=` so phones pick up new code; bump it on
+  every deploy that changes JS/CSS. Once the player has shown `REACH_MIN` of travel, pipe gaps
   are spawned inside the observed bird range (`reach`).
 - Quit: the ✕ pill (top-left) or Escape calls `quitToMenu()` — discards the clip,
   resets the run and calibration, stops the camera tracks, and shows the intro with
@@ -62,10 +73,13 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,
   `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
   recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
-- Run recorder: every countdown starts a `MediaRecorder` on `canvas.captureStream(0)`
-  (frames pushed with `requestFrame()` after each render, sfx routed through a
-  `MediaStreamAudioDestinationNode`). Prefers `video/mp4` (H.264/AAC) and falls back
-  to WebM. Stops 1.8s after game over (runs with score 0 are discarded, clips cap at
+- Run recorder: every countdown starts recording. On Apple browsers (and with `?rec=wc`)
+  it encodes the canvas with WebCodecs (`VideoEncoder`, H.264 `avc1.42002a`, 30 fps, real
+  timestamps, letterboxed if the phone rotates) and muxes an MP4 with mp4-muxer 5.2.2
+  (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
+  MP4s with collapsed timestamps and an "83 day" duration. Elsewhere it uses MediaRecorder
+  on `canvas.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
+  Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 1.8s after game over (runs with score 0 are discarded, clips cap at
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
   ground strip so shared clips carry the URL.
