@@ -115,6 +115,7 @@
   const scale = { lo: null, hi: null, last: null };
   const SCALE_MIN_RANGE = 0.16;    // shoulder-width change (frame fraction) that counts as a full rep
   const SCALE_READY_RANGE = 0.08;
+  let earRatio = 3.2, earRatioSeen = false;   // shoulder width ÷ ear distance, learned per player
   const reach = { lo: null, hi: null }; // observed bird range (fraction of H) → pipes stay reachable
   const REACH_MIN = 0.45;          // only constrain gaps once the player has shown this much travel
   const EXACT = new URLSearchParams(location.search).get('exact') === '1';
@@ -250,9 +251,17 @@
     if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
     if (y === null) return;
     // Apparent size: shoulder width, or ear distance scaled up when the shoulders are out of frame.
+    // The ear→shoulder ratio is learned from this player whenever both are visible, so the
+    // size signal doesn't jump when the shoulders leave the frame close to a floor-level phone.
     let sw = null;
-    if (v(11) > 0.5 && v(12) > 0.5) sw = Math.abs(lm[11].x - lm[12].x);
-    else if (v(7) > 0.5 && v(8) > 0.5) sw = Math.abs(lm[7].x - lm[8].x) * 3.2;
+    const shW = v(11) > 0.5 && v(12) > 0.5 ? Math.abs(lm[11].x - lm[12].x) : null;
+    const earW = v(7) > 0.5 && v(8) > 0.5 ? Math.abs(lm[7].x - lm[8].x) : null;
+    if (shW !== null && earW !== null && earW > 0.01) {
+      const r = Math.min(5, Math.max(2, shW / earW));
+      earRatio = earRatioSeen ? earRatio + (r - earRatio) * 0.1 : r; earRatioSeen = true;
+    }
+    if (shW !== null) sw = shW;
+    else if (earW !== null) sw = earW * earRatio;
     feedTracking(y, source, sw);
   }
 
@@ -426,6 +435,7 @@
   let recorder = null, recChunks = [], recStream = null, recTrack = null, recStart = 0, recStopTimer = null;
   let lastClip = null;             // { blob, url, ext, seconds, score, mode }
   const REC_MAX_MS = 120000;       // cap a single clip at two minutes
+  const REC_FPS = 30;
   const canRecord = typeof MediaRecorder !== 'undefined' && !!HTMLCanvasElement.prototype.captureStream;
   const recMime = (() => {
     if (!canRecord) return null;
@@ -439,7 +449,9 @@
     stopRecording(true);
     try {
       if (!recStream) {
-        recStream = canvas.captureStream(0);          // frames are pushed explicitly after each render
+        // A fixed capture rate lets the browser stamp frames itself. Pushing frames by hand with
+        // captureStream(0) + requestFrame() gave Safari broken timestamps (clip froze after ~4s).
+        recStream = canvas.captureStream(REC_FPS);
         recTrack = recStream.getVideoTracks()[0];
         if (audio) {
           if (!recDest) recDest = audio.createMediaStreamDestination();
@@ -447,10 +459,10 @@
         }
       }
       recChunks = [];
-      recorder = new MediaRecorder(recStream, recMime ? { mimeType: recMime, videoBitsPerSecond: 6_000_000 } : undefined);
+      recorder = new MediaRecorder(recStream, recMime ? { mimeType: recMime, videoBitsPerSecond: 4_000_000 } : undefined);
       recorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
       recorder.onstop = () => finishClip();
-      recorder.start(1000);
+      recorder.start();                               // one blob at stop; Safari mangles timesliced MP4 chunks
       recStart = performance.now();
       recDot.hidden = false;
       shareBar.hidden = true;
@@ -489,7 +501,7 @@
     a.href = lastClip.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   }
   // Push a frame into the recording after every render.
-  function recFrame() { if (recorder && recTrack && recTrack.requestFrame) recTrack.requestFrame(); }
+  function recFrame() { /* frames are sampled by captureStream(REC_FPS); nothing to push */ }
 
   // ---------- Game control ----------
   function resetRun() {
