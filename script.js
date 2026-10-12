@@ -675,7 +675,7 @@
   // Real reps, read from the bird's own movement: a rep is a down-and-up swing of at least
   // REP_MIN of the play range; a full rep travels FULL_REP of it both ways. Rep speed
   // (range covered per second) against the player's own early reps is the tiredness signal.
-  const REP_MIN = 0.22, FULL_REP = 0.6, REP_HYST = 0.07;
+  const REP_MIN = 0.15, FULL_REP = 0.6, REP_HYST = 0.06;
   const run = {};
   function resetExtras() {
     Object.assign(run, {
@@ -714,17 +714,17 @@
       burst(bird.x, bird.y, 6, ['#7ec850', '#ffffff'], H * 0.2, H * 0.4);
     } else run.streak = 0;
     // Tiredness: recent rep speed vs the best of the player's own first reps.
-    if (run.speeds.length >= 6) {
-      const early = run.speeds.slice(0, 6).sort((x, y) => y - x).slice(0, 3);
+    if (run.speeds.length >= 5) {
+      const early = run.speeds.slice(0, 5).sort((x, y) => y - x).slice(0, 3);
       const base = early.reduce((x, y) => x + y, 0) / early.length;
       const recent = run.speeds.slice(-3).reduce((x, y) => x + y, 0) / 3;
       const before = run.fatigue;
-      run.fatigue = Math.min(1, Math.max(0, (0.78 - recent / base) / 0.33));
-      if (run.fatigue > 0.5 && !run.tiredShown) {
+      run.fatigue = Math.min(1, Math.max(0, (0.88 - recent / base) / 0.3));
+      if (run.fatigue > 0.45 && !run.tiredShown) {
         run.tiredShown = true; if (run.tiredAt === null) run.tiredAt = run.reps;
         fx.popups.push({ x: bird.x, y: bird.y - 44 * unit, t: 0, text: 'TIRED…', fill: '#9ad0ff', size: 12 });
       }
-      if (before > 0.5 && run.fatigue < 0.2) {
+      if (before > 0.45 && run.fatigue < 0.15) {
         run.tiredShown = false;
         fx.banner = { text: 'SECOND WIND!', t: 0 };
         burst(bird.x, bird.y, 24, HEAT_COLORS.slice(1), H * 0.4, H * 0.5);
@@ -1384,7 +1384,7 @@
     const sk = skinDef(id), pal = { ...PAL, ...(sk.pal || {}) };
     const b = (rows, tint) => bakeFrame(sk.patch ? patchRows(rows, sk.patch) : rows, tint, pal);
     return {
-      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED), hit: b(HIT, 'rgba(255,70,70,0.35)'),
+      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED, 'rgba(120,170,255,0.28)'), hit: b(HIT, 'rgba(255,70,70,0.35)'),
       ghost: b(MID, 'rgba(255,255,255,0.55)'), ghostUp: b(UP, 'rgba(255,255,255,0.55)'), ghostHit: b(HIT, 'rgba(255,255,255,0.55)'),
     };
   }
@@ -1409,8 +1409,8 @@
     if (state === 'over' && !(duel.on && duel.outlasted)) return FR.hit;
     const fast = H * 0.08;
     // Straining: low in the frame (bottom of a rep) and barely moving.
+    if (state === 'playing' && run.fatigue > 0.45 && Math.abs(bird.vy) < H * 0.6) return FR.tired;
     if (state === 'playing' && bird.y > H * 0.72 && Math.abs(bird.vy) < H * 0.15) return FR.strain;
-    if (state === 'playing' && run.fatigue > 0.5 && Math.abs(bird.vy) < H * 0.25) return FR.tired;
     if (bird.vy < -fast) return Math.floor(bird.flapT * 18) % 2 ? FR.up : FR.mid;   // frantic flapping upward
     if (bird.vy > fast) return FR.down;                                              // gliding down
     return [FR.mid, FR.up, FR.mid, FR.down][Math.floor(bird.flapT * 6) % 4];          // idle flap
@@ -1440,16 +1440,20 @@
     const lvl = Math.round(Math.min(4, run.flame || 0));
     const glow = state === 'playing' && lvl >= 1 ? { color: HEAT_COLORS[lvl], blur: (10 + 8 * lvl) * unit } : null;
     blitBird(frame, bird.x, bird.y, bird.rot, sx, sy, 1, glow);
-    // Sweat drops while straining or tired.
+    // Sweat drops while straining or tired (two, bigger, when tired).
     if (frame === FR.strain || frame === FR.tired) {
-      const d = (bird.flapT * 2.2) % 1;
-      const px = 3.4 * unit;
-      ctx.save();
-      ctx.translate(bird.x + 24 * unit, bird.y - 30 * unit + d * 26 * unit);
-      ctx.globalAlpha = 1 - d;
-      ctx.fillStyle = '#4fc3f7';
-      ctx.fillRect(0, 0, px, px * 2); ctx.fillRect(-px, px, px * 3, px);
-      ctx.restore();
+      const tiredNow = frame === FR.tired;
+      const px = 3.4 * unit * (tiredNow ? 1.5 : 1);
+      for (const [ox, phase] of tiredNow ? [[24, 0], [-14, 0.5]] : [[24, 0]]) {
+        const d = (bird.flapT * 2.2 + phase) % 1;
+        ctx.save();
+        ctx.translate(bird.x + ox * unit, bird.y - 30 * unit + d * 30 * unit);
+        ctx.globalAlpha = 1 - d;
+        ctx.fillStyle = '#4fc3f7';
+        ctx.fillRect(0, 0, px, px * 2); ctx.fillRect(-px, px, px * 3, px);
+        ctx.restore();
+      }
+      if (tiredNow) text('TIRED', bird.x, bird.y - 46 * unit, 10 * unit, { fill: '#9ad0ff' });
     }
   }
 
@@ -1487,6 +1491,7 @@
       text(fmtScore(mode, score), 0, 0, big, { fill: run.heat >= 2 ? '#ffe2b0' : '#fff' });
       ctx.restore();
       if (daily.on) text(`DAILY ${todayLabel()}${ghost ? ' · BEST ' + ghost.score : ''}`, W / 2, H * 0.12 + 44 * unit, 9 * unit, { fill: '#4fc3f7' });
+      if (!MODES[mode].hold) drawEnergy(W / 2, H * 0.12 + (daily.on ? 66 : 48) * unit);
       return;
     }
     if (state === 'ready') {
@@ -1537,6 +1542,20 @@
       if (againTimer) againTimer.textContent = `auto in ${left}s`;
       return;
     }
+  }
+
+  // Energy bar: drains as reps slow down (fatigue), so tiredness is always visible.
+  function drawEnergy(cx, cy) {
+    const e = 1 - (run.fatigue || 0), bw = 190 * unit, bh = 16 * unit;
+    const col = e > 0.6 ? '#7ec850' : e > 0.3 ? '#f6c948' : '#e0432b';
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(cx - bw / 2 - 3 * unit, cy - bh / 2 - 3 * unit, bw + 6 * unit, bh + 6 * unit);
+    ctx.fillStyle = '#3d1c12'; ctx.fillRect(cx - bw / 2, cy - bh / 2, bw, bh);
+    ctx.fillStyle = col; ctx.fillRect(cx - bw / 2, cy - bh / 2, bw * e, bh);
+    ctx.restore();
+    const tired = run.fatigue > 0.45, blink = Math.floor(performance.now() / 350) % 2;
+    text(tired ? 'TIRED!' : 'ENERGY', cx - bw / 2 - 10 * unit, cy, 10 * unit, { align: 'right', fill: tired ? (blink ? '#ff6b57' : '#ffffff') : '#ffffff' });
+    if (run.reps > 0) text(`${run.reps} REPS`, cx + bw / 2 + 10 * unit, cy, 10 * unit, { align: 'left' });
   }
 
   function drawDuelHUD(big, mid, small) {

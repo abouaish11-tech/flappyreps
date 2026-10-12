@@ -147,9 +147,11 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   - Real reps: `trackReps()` reads the bird's own swings (hysteresis `REP_HYST`), a rep is
     a down+up pair ≥ `REP_MIN` of the play range, full range ≥ `FULL_REP` ("FULL REP" /
     "3x FULL!" popups). No "go deeper" nag: gap heights dictate how far you move.
-  - Tiredness: rep speed vs the best 3 of the first 6 reps; `run.fatigue` 0..1. Above 0.5
-    the bird gets the `TIRED` face, sweats, flaps slower and the flames dim; recovering
-    shows SECOND WIND. Cosmetic only, never changes difficulty.
+  - Tiredness: rep speed vs the best 3 of the first 5 reps; `run.fatigue` 0..1, starting
+    once recent reps fall under 88% of that pace. An ENERGY bar under the score drains with
+    it (`drawEnergy()`, also shows the rep count). Above 0.45 the bird gets the pale-blue
+    `TIRED` face (wins over the strain face), a TIRED tag, two sweat drops, slower flaps and
+    dimmer flames; recovering shows SECOND WIND. Cosmetic only, never changes difficulty.
   - Boss pipes: every 25th pipe in solo push-up/squat play, alternating a sliding gap
     (`boss: 'slide'`) and a 2.6× wide pipe set low (`boss: 'wide'`), steel theme with hazard
     stripes. Not in duels or plank.
