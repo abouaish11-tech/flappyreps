@@ -682,7 +682,7 @@
       heat: 0, peakHeat: 0, flame: 0, steamT: 0, emberT: 0,
       dir: 0, ext: null, extT: 0, turnY: null, turnT: 0, halves: [], reps: 0, full: 0,
       speeds: [], fatigue: 0, tiredAt: null, tiredShown: false, streak: 0, bestStreak: 0,
-      t: 0, pipeCount: 0, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
+      t: 0, pipeCount: 0, bossBanner: false, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
     });
   }
   const birdN = () => { const bottom = groundTop() - 22 * unit, top = 20 * unit; return (bird.y - top) / Math.max(1, bottom - top); };
@@ -1058,7 +1058,7 @@
       if (!p.passed && p.x + p.w < bird.x) {
         p.passed = true;
         if (p.boss) {
-          setTimeout(() => { if (state === 'playing') fx.banner = { text: 'BOSS BEATEN!', t: 0, fill: '#7ec850' }; }, 0);
+          run.bossBanner = true;   // shown by onPoint() this same frame, after any heat banner
           burst(bird.x, bird.y, 36, ['#cfe3f2', '#e0432b', '#ffffff', '#f7d21c'], H * 0.6, H * 0.8);
         }
         if (hold) {
@@ -1095,7 +1095,8 @@
     const hot = run.heat >= 4;
     fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: hot ? '+1!' : '+1', fill: hot ? '#ffb347' : undefined, size: hot ? 22 : 16 });
     burst(bird.x, bird.y, 10, run.heat >= 2 ? ['#ffd200', '#ff7b22', '#ffffff'] : ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
-    if (heatCheck()) { /* heat banner shown */ }
+    if (run.bossBanner) { run.bossBanner = false; heatCheck(); fx.banner = { text: 'BOSS BEATEN!', t: 0, fill: '#7ec850' }; sfx.milestone(); }
+    else if (heatCheck()) { /* heat banner shown */ }
     else if (MILESTONES.has(score)) {
       fx.banner = { text: `${score} REPS!`, t: 0 };
       burst(W / 2, H * 0.4, 40, ['#f7d21c', '#e0432b', '#ffffff', '#4fc3f7'], H * 0.6, H * 0.8);
