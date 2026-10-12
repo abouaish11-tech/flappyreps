@@ -67,7 +67,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=20261011c" />
+  <link rel="stylesheet" href="style.css?v=20261012a" />
 </head>
 <body class="in-intro">
   <div id="stage">
@@ -165,6 +165,18 @@
     </div>
   </div>
 
+  <div id="skins" class="overlay" hidden>
+    <div class="card board skins">
+      <div class="board-head">
+        <h2>SKINS</h2>
+        <button id="skins-close" type="button" aria-label="close">✕</button>
+      </div>
+      <p id="skins-total" class="skins-total"></p>
+      <ul id="skins-list"></ul>
+      <p class="skins-note">Unlock birds with lifetime reps (plank: 1 per 3 s). Diamond comes with a Day Pass or Pro.</p>
+    </div>
+  </div>
+
   <div id="intro">
     <div class="hero">
       <div class="hero-top">
@@ -200,6 +212,8 @@
 
       <div class="cta">
         <button id="start" type="button">▶&nbsp; PLAY</button>
+        <button id="intro-daily" type="button" class="secondary daily">📅 DAILY CHALLENGE</button>
+        <button id="intro-skins" type="button" class="secondary">🐤 SKINS</button>
         <button id="intro-duel" type="button" class="secondary">⚔ DUEL A FRIEND</button>
         <button id="intro-board" type="button" class="secondary">🏆 LEADERBOARD</button>
       </div>
@@ -240,9 +254,9 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
-  <script src="analytics.js?v=20261011c"></script>
-  <script src="paywall.js?v=20261011c"></script>
-  <script src="duel-net.js?v=20261011c"></script>
-  <script src="script.js?v=20261011c"></script>
+  <script src="analytics.js?v=20261012a"></script>
+  <script src="paywall.js?v=20261012a"></script>
+  <script src="duel-net.js?v=20261012a"></script>
+  <script src="script.js?v=20261012a"></script>
 </body>
 </html>

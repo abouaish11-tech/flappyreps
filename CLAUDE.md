@@ -79,7 +79,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
   MP4s with collapsed timestamps and an "83 day" duration. Elsewhere it uses MediaRecorder
   on `canvas.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
-  Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 1.8s after game over (runs with score 0 are discarded, clips cap at
+  Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 2.6s after game over (runs with score 0 are discarded, clips cap at
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
   ground strip so shared clips carry the URL.
@@ -138,6 +138,33 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   behind the paywall). No global leaderboard (user decision). Test harness:
   `duel-test.html` (gitignored) shows two game iframes linked locally, with an
   arrow-key autopilot `pilot(frame, maxPipes)`.
+- Run extras ("Run extras" section of `script.js`, state in the `run` object, reset by
+  `resetExtras()` in `resetRun()`):
+  - Heat: `heatFor(score)` = one level per 5 points (10 s in plank), max 4 (WARMING UP, ON
+    FIRE, BLAZING, BEAST MODE). Level-ups show a banner (`heatCheck()`, takes priority over
+    the milestone banner). Visuals in `heatFx()`/`drawBird()`/`drawPipe()`: glow, steam,
+    flame trail, glowing pipes at 3+, bigger "+1!" at 4; the point sound pitches up.
+  - Real reps: `trackReps()` reads the bird's own swings (hysteresis `REP_HYST`), a rep is
+    a down+up pair ≥ `REP_MIN` of the play range, full range ≥ `FULL_REP` ("FULL REP" /
+    "3x FULL!" popups). No "go deeper" nag: gap heights dictate how far you move.
+  - Tiredness: rep speed vs the best 3 of the first 6 reps; `run.fatigue` 0..1. Above 0.5
+    the bird gets the `TIRED` face, sweats, flaps slower and the flames dim; recovering
+    shows SECOND WIND. Cosmetic only, never changes difficulty.
+  - Boss pipes: every 25th pipe in solo push-up/squat play, alternating a sliding gap
+    (`boss: 'slide'`) and a 2.6× wide pipe set low (`boss: 'wide'`), steel theme with hazard
+    stripes. Not in duels or plank.
+  - Seeded courses: solo gaps come from `runRand` (mulberry32). Daily challenge (intro
+    button or `?daily=1`): seed = date + mode, so everyone gets the same course; best per
+    day in `pushup-bird-daily:<mode>:<date>`. The ghost of today's best daily attempt
+    (`pushup-bird-ghost:<mode>:<date>`, y every 50 ms, older days deleted) races you on
+    the same course; passing its score shows BEAT TODAY'S BEST. Ghost is daily-only:
+    normal runs have random courses, so a ghost there would fly through pipes.
+  - Skins (`SKINS`, built by `buildFrames()` as palette swaps / sprite patches of our own
+    bird): Classic, Headband 100, Shades 250, Gold 500, Fire Bird 1000 lifetime reps
+    (`lifetimeReps()`: push-up + squat scores + plank seconds / 3), Diamond for an active
+    Day Pass / Pro. Saved in `pushup-bird-skin`; the 🐤 SKINS intro button opens the picker.
+  - Game-over card = stats card (reps, full range, slowdown rep, peak heat, daily best,
+    PLAY FREE AT FLAPPYREPS.COM); the recorder keeps 2.6 s of it at the end of each clip.
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the
   `#againbar` PLAY AGAIN button, a tap on the canvas, or Space restarts sooner (all
   call `toReady()`, which then runs the normal ready→countdown flow).

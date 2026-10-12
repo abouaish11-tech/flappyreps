@@ -583,3 +583,18 @@ body.in-intro #stage .pill { display: none; }
 .about b { color: var(--fg); }
 .about a { color: var(--accent); }
 .about-links { margin-top: 18px !important; font-size: 13px; }
+
+/* Daily challenge + skins */
+.secondary.daily { color: #4fc3f7; border-color: #4fc3f7; }
+.card.board.skins { text-align: left; }
+.skins-total { font-size: 10px; margin: 0 0 12px; }
+.skins-note { font: 13px/1.4 system-ui, sans-serif; margin: 12px 0 0; color: #5a3a24; }
+#skins-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+#skins-list li { background: #fff8d6; border: 3px solid #3d1c12; padding: 10px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; }
+#skins-list li.locked { opacity: 0.55; cursor: default; }
+#skins-list li.on { border-color: #e0432b; box-shadow: inset 0 0 0 3px #f6c948; }
+#skins-list canvas { width: 88px; height: 64px; image-rendering: pixelated; }
+#skins-list .nm { font-size: 9px; }
+#skins-list .st { font-size: 7px; color: #5a3a24; text-align: center; line-height: 1.4; }
+.skins-bar { height: 6px; width: 100%; background: #3d1c12; }
+.skins-bar i { display: block; height: 100%; background: #7ec850; }

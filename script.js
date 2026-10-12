@@ -176,7 +176,7 @@
     o.stop(t + dur);
   }
   const sfx = {
-    point: () => { beep(880, 0.08); setTimeout(() => beep(1320, 0.12), 70); },
+    point: () => { const k = 1 + 0.07 * (run.heat || 0); beep(880 * k, 0.08); setTimeout(() => beep(1320 * k, 0.12), 70); },
     hit: () => { beep(220, 0.25, 'sawtooth', 0.17, -160); },
     tick: () => beep(660, 0.07),
     go: () => beep(990, 0.18),
@@ -399,6 +399,7 @@
     resetRun();
     toReady();
     resetCal();
+    daily.on = DAILY_URL;
     keyboardY = null;
     shareBar.hidden = true;
     againBar.hidden = true;
@@ -585,7 +586,7 @@
   }
   function finishClip(blob, ext) {
     if (lastClip) URL.revokeObjectURL(lastClip.url);
-    lastClip = { blob, url: URL.createObjectURL(blob), ext, seconds: Math.round((performance.now() - recStart) / 1000), score, mode };
+    lastClip = { blob, url: URL.createObjectURL(blob), ext, seconds: Math.round((performance.now() - recStart) / 1000), score, mode, daily: daily.on };
     shareInfo.textContent = `${fmtScore(mode, score)} · ${lastClip.seconds}s clip`;
     shareBar.hidden = false;
   }
@@ -594,7 +595,9 @@
     if (window.FRAnalytics) FRAnalytics.clipShare(lastClip.mode, lastClip.score);
     const name = `flappy-reps-${lastClip.mode}-${lastClip.score}.${lastClip.ext}`;
     const file = new File([lastClip.blob], name, { type: lastClip.blob.type });
-    const text = `I scored ${fmtScore(lastClip.mode, lastClip.score)} on Flappy Reps (${MODES[lastClip.mode].label.toLowerCase()}). Beat me: https://flappyreps.com`;
+    const text = lastClip.daily
+      ? `I got ${fmtScore(lastClip.mode, lastClip.score)} on today's Flappy Reps daily challenge (${MODES[lastClip.mode].label.toLowerCase()}, ${todayLabel()}). Same course for everyone: https://flappyreps.com/?daily=1`
+      : `I scored ${fmtScore(lastClip.mode, lastClip.score)} on Flappy Reps (${MODES[lastClip.mode].label.toLowerCase()}). Beat me: https://flappyreps.com`;
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try { await navigator.share({ files: [file], title: 'Flappy Reps', text }); return; }
       catch (err) { if (err && err.name === 'AbortError') return; }
@@ -626,16 +629,203 @@
     } catch (e) { wc.failed = true; console.warn('frame encode failed', e); }
   }
 
+  // ---------- Run extras: heat, tiredness, form, ghost, daily, boss pipes, skins ----------
+  // Seeded courses: every solo run draws its gaps from runRand. The daily challenge seeds it
+  // from the date (+ mode), so everyone gets the same course that day and the ghost of your
+  // best attempt flies the exact same gaps.
+  function mulberry(seed) {
+    let a = seed >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  let runRand = Math.random;
+  const DAILY_URL = new URLSearchParams(location.search).get('daily') === '1';
+  const daily = { on: DAILY_URL };
+  const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const todayLabel = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
+  function dailySeed() { let h = 2166136261; for (const c of todayKey() + ':' + mode) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
+  const dailyBestKey = () => `pushup-bird-daily:${mode}:${todayKey()}`;
+  const ghostKey = () => `pushup-bird-ghost:${mode}:${todayKey()}`;
+  const dailyBest = () => Number(localStorage.getItem(dailyBestKey()) || 0);
+  const GHOST_STEP_MS = 50;
+  let ghost = null;                 // { seed, score, ys: [y/H every 50 ms], endMs } — today's best daily run
+  let ghostRec = null;              // the run being played, recorded in the same format
+  let ghostShowY = null;
+  function loadGhost() {
+    try {
+      const g = JSON.parse(localStorage.getItem(ghostKey()) || 'null');
+      return g && Array.isArray(g.ys) && g.ys.length > 4 ? g : null;
+    } catch { return null; }
+  }
+  function saveGhost() {
+    if (!ghostRec || ghostRec.ys.length < 5) return;
+    try { localStorage.setItem(ghostKey(), JSON.stringify({ seed: ghostRec.seed, score, ys: ghostRec.ys, endMs: ghostRec.ys.length * GHOST_STEP_MS })); }
+    catch { /* storage full: skip the ghost */ }
+    // Old days' ghosts are dead weight.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('pushup-bird-ghost:') && !k.endsWith(todayKey())) localStorage.removeItem(k);
+    }
+  }
+
+  // Heat: every 5 points (10 s in plank) the bird heats up; tiredness cools it down again.
+  const HEAT_NAMES = ['', 'WARMING UP!', 'ON FIRE!', 'BLAZING!', 'BEAST MODE!'];
+  const HEAT_COLORS = ['', '#ffb347', '#ff7b22', '#ff4d1a', '#ff2a00'];
+  const heatStep = () => (MODES[mode].hold ? 10 : 5);
+  const heatFor = (n) => Math.min(4, Math.floor(n / heatStep()));
+  // Real reps, read from the bird's own movement: a rep is a down-and-up swing of at least
+  // REP_MIN of the play range; a full rep travels FULL_REP of it both ways. Rep speed
+  // (range covered per second) against the player's own early reps is the tiredness signal.
+  const REP_MIN = 0.22, FULL_REP = 0.6, REP_HYST = 0.07;
+  const run = {};
+  function resetExtras() {
+    Object.assign(run, {
+      heat: 0, peakHeat: 0, flame: 0, steamT: 0, emberT: 0,
+      dir: 0, ext: null, extT: 0, turnY: null, turnT: 0, halves: [], reps: 0, full: 0,
+      speeds: [], fatigue: 0, tiredAt: null, tiredShown: false, streak: 0, bestStreak: 0,
+      t: 0, pipeCount: 0, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
+    });
+  }
+  const birdN = () => { const bottom = groundTop() - 22 * unit, top = 20 * unit; return (bird.y - top) / Math.max(1, bottom - top); };
+  function trackReps(now) {
+    const n = birdN();
+    if (run.ext === null) { run.ext = n; run.extT = now; run.turnY = n; run.turnT = now; return; }
+    if (run.dir >= 0 && n > run.ext) { run.ext = n; run.extT = now; }
+    if (run.dir <= 0 && n < run.ext) { run.ext = n; run.extT = now; }
+    if (run.dir === 0) { if (Math.abs(n - run.turnY) > REP_HYST) run.dir = n > run.turnY ? 1 : -1; return; }
+    const reversed = run.dir > 0 ? n < run.ext - REP_HYST : n > run.ext + REP_HYST;
+    if (!reversed) return;
+    const amp = Math.abs(run.ext - run.turnY), dur = Math.max(0.15, (run.extT - run.turnT) / 1000);
+    run.halves.push({ amp, speed: amp / dur, down: run.dir > 0 });
+    run.turnY = run.ext; run.turnT = run.extT; run.dir = -run.dir; run.ext = n; run.extT = now;
+    // A rep completes on the way back up (bottom → top), made of the last two halves.
+    const h = run.halves;
+    if (h.length >= 2 && !h[h.length - 1].down && h[h.length - 2].down) {
+      const a = h[h.length - 2], b = h[h.length - 1];
+      if (Math.min(a.amp, b.amp) >= REP_MIN) onRep(Math.min(a.amp, b.amp), (a.speed + b.speed) / 2);
+    }
+  }
+  function onRep(amp, speed) {
+    run.reps++;
+    run.speeds.push(speed);
+    if (amp >= FULL_REP) {
+      run.full++; run.streak++; run.bestStreak = Math.max(run.bestStreak, run.streak);
+      const label = run.streak >= 3 && (run.streak === 3 || run.streak % 5 === 0) ? `${run.streak}x FULL!` : 'FULL REP';
+      fx.popups.push({ x: bird.x - 40 * unit, y: bird.y + 34 * unit, t: 0, text: label, fill: '#7ec850', size: 10 });
+      burst(bird.x, bird.y, 6, ['#7ec850', '#ffffff'], H * 0.2, H * 0.4);
+    } else run.streak = 0;
+    // Tiredness: recent rep speed vs the best of the player's own first reps.
+    if (run.speeds.length >= 6) {
+      const early = run.speeds.slice(0, 6).sort((x, y) => y - x).slice(0, 3);
+      const base = early.reduce((x, y) => x + y, 0) / early.length;
+      const recent = run.speeds.slice(-3).reduce((x, y) => x + y, 0) / 3;
+      const before = run.fatigue;
+      run.fatigue = Math.min(1, Math.max(0, (0.78 - recent / base) / 0.33));
+      if (run.fatigue > 0.5 && !run.tiredShown) {
+        run.tiredShown = true; if (run.tiredAt === null) run.tiredAt = run.reps;
+        fx.popups.push({ x: bird.x, y: bird.y - 44 * unit, t: 0, text: 'TIRED…', fill: '#9ad0ff', size: 12 });
+      }
+      if (before > 0.5 && run.fatigue < 0.2) {
+        run.tiredShown = false;
+        fx.banner = { text: 'SECOND WIND!', t: 0 };
+        burst(bird.x, bird.y, 24, HEAT_COLORS.slice(1), H * 0.4, H * 0.5);
+        sfx.milestone();
+      }
+    }
+  }
+  // Called whenever the score changes. Returns true if it showed a heat banner.
+  function heatCheck() {
+    const lvl = heatFor(score);
+    if (lvl <= run.heat) return false;
+    run.heat = lvl; run.peakHeat = Math.max(run.peakHeat, lvl);
+    fx.banner = { text: HEAT_NAMES[lvl], t: 0, fill: HEAT_COLORS[lvl] };
+    burst(bird.x, bird.y, 30, ['#ffd200', '#ff7b22', '#ff3b1a', '#ffffff'], H * 0.5, -H * 0.2);
+    sfx.milestone();
+    return true;
+  }
+  // Per-frame visuals for heat and tiredness (steam, flame trail, embers).
+  function heatFx(dt) {
+    run.flame += ((run.heat * (1 - 0.6 * run.fatigue)) - run.flame) * Math.min(1, dt * 3);
+    if (run.heat >= 1) {
+      run.steamT += dt;
+      if (run.steamT > (run.flame >= 1.5 ? 0.5 : 0.22)) {
+        run.steamT = 0;
+        fx.particles.push({ x: bird.x + (Math.random() - 0.5) * 20 * unit, y: bird.y - 22 * unit, vx: (Math.random() - 0.5) * 20 * unit, vy: -60 * unit, g: -20 * unit,
+          life: 0.7, age: 0, size: (5 + Math.random() * 4) * unit, color: 'rgba(235,235,235,0.75)', spin: 0, rot: 0 });
+      }
+    }
+    if (run.flame >= 1.5 || skinId === 'fire') {
+      run.emberT += dt;
+      const every = skinId === 'fire' && run.flame < 1.5 ? 0.12 : 0.045 / Math.max(1, run.flame - 0.5);
+      while (run.emberT > every) {
+        run.emberT -= every;
+        const big = Math.max(1, run.flame);
+        fx.particles.push({ x: bird.x - 26 * unit, y: bird.y + (Math.random() - 0.5) * 18 * unit, vx: -(80 + Math.random() * 120) * unit, vy: (Math.random() - 0.5) * 50 * unit - 30 * unit, g: -40 * unit,
+          life: 0.25 + 0.08 * big, age: 0, size: (3 + Math.random() * 3 * big) * unit, color: ['#ffd200', '#ff7b22', '#ff3b1a'][(Math.random() * 3) | 0], spin: 0, rot: 0 });
+      }
+    }
+  }
+  // Ghost: record this run's path; draw today's best attempt on the same course.
+  function ghostTick(dt) {
+    if (!ghostRec) return;
+    ghostRec.acc += dt * 1000;
+    while (ghostRec.acc >= GHOST_STEP_MS) { ghostRec.acc -= GHOST_STEP_MS; ghostRec.ys.push(Math.round((bird.y / H) * 1000) / 1000); }
+    if (ghost && !run.beatGhost && score > ghost.score) {
+      run.beatGhost = true;
+      fx.banner = { text: "BEAT TODAY'S BEST!", t: 0, fill: '#7ec850' };
+      burst(W / 2, H * 0.4, 40, ['#7ec850', '#ffffff', '#f7d21c'], H * 0.6, H * 0.8);
+      sfx.milestone();
+    }
+  }
+  function drawGhost() {
+    if (!ghost || !daily.on || duel.on || (state !== 'playing' && state !== 'over')) return;
+    const ms = run.t * 1000, i = ms / GHOST_STEP_MS;
+    const alive = i < ghost.ys.length - 1;
+    let y;
+    if (alive) { const a = Math.floor(i), f = i - a; y = (ghost.ys[a] * (1 - f) + ghost.ys[a + 1] * f) * H; }
+    else {
+      const since = (ms - ghost.endMs) / 1000;
+      if (since > 0.9) return;
+      y = ghost.ys[ghost.ys.length - 1] * H + since * since * H * 0.8;
+      if (!run.ghostDownShown && state === 'playing') { run.ghostDownShown = true; fx.popups.push({ x: bird.x, y: y - 40 * unit, t: 0, text: 'BEST RUN DOWN', fill: '#cfe3f2', size: 9 }); }
+    }
+    ghostShowY = y;
+    const frame = !alive ? FR.ghostHit : Math.floor(run.t * 8) % 2 ? FR.ghostUp : FR.ghost;
+    blitBird(frame, bird.x, y, alive ? 0 : 0.6, 1, 1, alive ? 0.42 : 0.3);
+    if (alive) text(`BEST ${ghost.score}`, bird.x, y - 36 * unit, 7 * unit, { fill: '#e8f4ff' });
+  }
+
+  // Lifetime reps unlock skins: push-up and squat reps, plus one per 3 s of plank.
+  function lifetimeReps() {
+    let n = 0;
+    for (const r of runs) n += r.mode === 'plank' ? Math.floor(r.score / 3) : r.score;
+    return n;
+  }
+  const isPro = () => !!(window.Paywall && Paywall.enabled() && Paywall.unlocked());
+  const skinUnlocked = (sk, total = lifetimeReps()) => (sk.pro ? isPro() : total >= sk.need);
+  function setSkin(id) {
+    const sk = skinDef(id);
+    if (!skinUnlocked(sk)) return;
+    skinId = sk.id; localStorage.setItem(SKIN_KEY, skinId); FR = buildFrames(skinId);
+  }
+  resetExtras();
+
   // ---------- Game control ----------
   function resetRun() {
     pipes = [];
     score = 0;
     speedMult = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
+    resetExtras();
+    ghostRec = null; ghostShowY = null;
   }
   function toCountdown() {
     state = 'countdown'; stateTimer = 0; resetRun(); holdSamples = [];
     if (duel.on) return; // duels are free and aren't recorded as solo runs
+    const seed = daily.on ? dailySeed() : (Math.random() * 4294967296) >>> 0;
+    runRand = mulberry(seed);
+    ghost = daily.on ? loadGhost() : null;
+    if (ghost && ghost.seed !== seed) ghost = null;
+    ghostRec = { seed, ys: [], acc: 0 };
     startRecording(); if (window.Paywall) Paywall.noteStart(); if (window.FRAnalytics) FRAnalytics.playStart(mode);
   }
   function toPlaying() {
@@ -656,10 +846,16 @@
     againBar.hidden = false;
     onHit();
     if (score > best) { best = score; localStorage.setItem(bestKey(), String(best)); }
+    if (daily.on && score > 0 && score > (ghost ? ghost.score : dailyBest() - 1)) saveGhost();
+    if (daily.on && score > dailyBest()) localStorage.setItem(dailyBestKey(), String(score));
     lastRank = recordRun();
+    // A skin unlocked by this run's reps?
+    const after = lifetimeReps();
+    const fresh = SKINS.find((k) => !k.pro && run.lifetimeBefore < k.need && after >= k.need);
+    if (fresh) { run.newSkin = fresh.name; setTimeout(() => { if (state === 'over') fx.banner = { text: `NEW SKIN: ${fresh.name}!`, t: 0, fill: '#7ec850' }; }, 900); }
     if (boardOpen) renderBoard();
-    // keep the game-over card in the clip, then finish it
-    if (score > 0) setTimeout(() => stopRecording(false), 1800); else stopRecording(true);
+    // keep the game-over stats card in the clip for a couple of seconds, then finish it
+    if (score > 0) setTimeout(() => stopRecording(false), 2600); else stopRecording(true);
   }
   function toReady() { state = 'ready'; stateTimer = 0; againBar.hidden = true; }
 
@@ -732,7 +928,7 @@
     bird.vy = (bird.y - prevY) / Math.max(dt, 1e-3);
     const targetRot = Math.max(-0.5, Math.min(0.9, bird.vy / (H * 1.2)));
     bird.rot += (targetRot - bird.rot) * Math.min(1, dt * 10);
-    bird.flapT += dt;
+    bird.flapT += dt * (1 - 0.5 * (run.fatigue || 0));   // tired birds flap slower
     // Squash when the bird reverses direction hard (top / bottom of a rep).
     if (Math.sign(prevVy) !== Math.sign(bird.vy) && Math.abs(prevVy) > H * 0.35) bird.squash = 0.22;
     bird.squash = Math.max(0, bird.squash - dt * 1.4);
@@ -790,13 +986,18 @@
 
     // ---- playing ----
     const hold = !!MODES[mode].hold;
+    run.t += dt;
+    if (!hold) trackReps(now);
+    heatFx(dt);
+    ghostTick(dt);
     if (hold) {
       holdT += dt;
       const sec = Math.floor(holdT);
       if (sec !== score) {
         score = sec;
         fx.scorePop = 0.6;
-        if (HOLD_MILESTONES.has(score)) {
+        if (heatCheck()) { /* heat banner shown */ }
+        else if (HOLD_MILESTONES.has(score)) {
           fx.banner = { text: `${score}s HOLD!`, t: 0 };
           burst(W / 2, H * 0.4, 40, ['#cfe3f2', '#f7d21c', '#ffffff', '#4fc3f7'], H * 0.6, H * 0.8);
           sfx.milestone();
@@ -816,24 +1017,50 @@
       const margin = H * 0.08;
       const playH = groundTop();
       // Duels: both players get the identical course, pipe i always has the same gap.
-      const rnd = duel.on ? duelRand(duel.pipeIdx++) : Math.random();
+      const rnd = duel.on ? duelRand(duel.pipeIdx++) : runRand();
+      run.pipeCount++;
       let cy = hold
         ? Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, holdY))
         : margin + gap / 2 + rnd * (playH - 2 * margin - gap);
+      // Camera play: keep the gap centre within the range the player has actually reached
+      // (the same random draw, mapped into that range, so seeded courses keep their shape).
+      let lo = margin + gap / 2, hi = playH - margin - gap / 2;
       if (!duel.on && !hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
-        // Camera play: keep the gap centre within the range the player has actually reached.
-        const lo = Math.max(margin + gap / 2, reach.lo * H + 10 * unit), hi = Math.min(playH - margin - gap / 2, reach.hi * H - 10 * unit);
-        if (hi > lo) cy = lo + Math.random() * (hi - lo);
+        const rl = Math.max(lo, reach.lo * H + 10 * unit), rh = Math.min(hi, reach.hi * H - 10 * unit);
+        if (rh > rl) { lo = rl; hi = rh; cy = lo + rnd * (hi - lo); }
       }
       if (gapHook) cy = Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, gapHook(gap, playH, margin, speed, pipeW)));
-      pipes.push({ x: W + pipeW, w: pipeW, top: cy - gap / 2, bottom: cy + gap / 2, passed: false });
+      const pipe = { x: W + pipeW, w: pipeW, top: cy - gap / 2, bottom: cy + gap / 2, passed: false };
+      // Boss pipe every 25th: a gap that slides up and down, or an extra-wide pipe you hold low through.
+      if (!duel.on && !hold && !gapHook && run.pipeCount % 25 === 0) {
+        if ((run.pipeCount / 25) % 2 === 1) {
+          const amp = Math.min(H * 0.1, (hi - lo) / 2);
+          pipe.boss = 'slide'; pipe.cy = Math.min(hi - amp, Math.max(lo + amp, cy)); pipe.amp = amp; pipe.gap = gap; pipe.ph = 0;
+        } else {
+          pipe.boss = 'wide'; pipe.w = pipeW * 2.6; pipe.x = W + pipe.w;
+          const low = lo + 0.8 * (hi - lo);
+          pipe.top = low - gap / 2; pipe.bottom = low + gap / 2;
+        }
+        fx.banner = { text: pipe.boss === 'slide' ? 'BOSS PIPE: IT MOVES!' : 'BOSS PIPE: HOLD LOW!', t: 0, fill: '#e0432b' };
+        sfx.tick();
+      }
+      pipes.push(pipe);
     }
 
     const r = 20 * unit; // collision radius
     for (const p of pipes) {
       p.x -= speed * dt;
+      if (p.boss === 'slide') {
+        p.ph += dt;
+        const c = p.cy + Math.sin(p.ph * Math.PI * 2 * 0.45) * p.amp;
+        p.top = c - p.gap / 2; p.bottom = c + p.gap / 2;
+      }
       if (!p.passed && p.x + p.w < bird.x) {
         p.passed = true;
+        if (p.boss) {
+          setTimeout(() => { if (state === 'playing') fx.banner = { text: 'BOSS BEATEN!', t: 0, fill: '#7ec850' }; }, 0);
+          burst(bird.x, bird.y, 36, ['#cfe3f2', '#e0432b', '#ffffff', '#f7d21c'], H * 0.6, H * 0.8);
+        }
         if (hold) {
           // Plank: passing a pipe is just confirmation you're still level.
           burst(bird.x, bird.y, 6, ['#ffffff', '#cfe3f2'], H * 0.25, H * 0.5);
@@ -865,9 +1092,11 @@
   }
   function onPoint() {
     fx.scorePop = 1;
-    fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: '+1' });
-    burst(bird.x, bird.y, 10, ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
-    if (MILESTONES.has(score)) {
+    const hot = run.heat >= 4;
+    fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: hot ? '+1!' : '+1', fill: hot ? '#ffb347' : undefined, size: hot ? 22 : 16 });
+    burst(bird.x, bird.y, 10, run.heat >= 2 ? ['#ffd200', '#ff7b22', '#ffffff'] : ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
+    if (heatCheck()) { /* heat banner shown */ }
+    else if (MILESTONES.has(score)) {
       fx.banner = { text: `${score} REPS!`, t: 0 };
       burst(W / 2, H * 0.4, 40, ['#f7d21c', '#e0432b', '#ffffff', '#4fc3f7'], H * 0.6, H * 0.8);
       sfx.milestone();
@@ -906,7 +1135,7 @@
       const k = p.t / 0.8;
       ctx.save();
       ctx.globalAlpha = 1 - k * k;
-      text(p.text, p.x, p.y - k * 70 * unit, 16 * unit, { fill: '#fbe58a' });
+      text(p.text, p.x, p.y - k * 70 * unit, (p.size || 16) * unit, { fill: p.fill || '#fbe58a' });
       ctx.restore();
     }
     if (fx.banner) {
@@ -916,7 +1145,8 @@
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.translate(W / 2, H * 0.42); ctx.scale(pop, pop);
-      text(fx.banner.text, 0, 0, 30 * unit, { fill: '#f6c948' });
+      const bs = fx.banner.text.length > 14 ? 20 : 30;
+      text(fx.banner.text, 0, 0, bs * unit, { fill: fx.banner.fill || '#f6c948' });
       ctx.restore();
     }
   }
@@ -947,7 +1177,7 @@
   }
 
   function drawPipe(p) {
-    const T = PIPE_THEMES[MODES[mode].pipes];
+    const T = PIPE_THEMES[p.boss ? 'steel' : MODES[mode].pipes];
     const capH = 30 * unit, capOver = 8 * unit, line = 3 * unit;
     const gTop = groundTop();
 
@@ -982,6 +1212,28 @@
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.fillRect(p.x, p.top, p.w, line * 1.5);
     ctx.fillRect(p.x, p.bottom + capH, p.w, line * 1.5);
+    if (p.boss) {
+      // Hazard stripes on both caps.
+      ctx.save();
+      for (const cy0 of [p.top - capH, p.bottom]) {
+        ctx.beginPath(); ctx.rect(p.x - capOver + line, cy0 + line, p.w + capOver * 2 - line * 2, capH - line * 2); ctx.clip();
+        ctx.fillStyle = '#e0432b';
+        for (let x = p.x - capOver - capH; x < p.x + p.w + capOver; x += 18 * unit) {
+          ctx.beginPath(); ctx.moveTo(x, cy0 + capH); ctx.lineTo(x + 9 * unit, cy0 + capH); ctx.lineTo(x + 9 * unit + capH, cy0); ctx.lineTo(x + capH, cy0); ctx.fill();
+        }
+        ctx.restore(); ctx.save();
+      }
+      ctx.restore();
+    }
+    if (run.heat >= 3 && state === 'playing') {
+      // Blazing: the pipes glow from the heat.
+      ctx.save();
+      ctx.strokeStyle = run.heat >= 4 ? 'rgba(255,90,20,0.75)' : 'rgba(255,150,40,0.55)';
+      ctx.lineWidth = 4 * unit; ctx.shadowColor = '#ff6a00'; ctx.shadowBlur = 18 * unit;
+      ctx.strokeRect(p.x - capOver, -line, p.w + capOver * 2, p.top + line);
+      ctx.strokeRect(p.x - capOver, p.bottom, p.w + capOver * 2, gTop - p.bottom);
+      ctx.restore();
+    }
   }
 
   // ---------- Ground strip (two parallax layers, tiles baked once per size) ----------
@@ -1095,27 +1347,50 @@
   });
   const HIT = patchRows(MID, { 3: [15, 'ewwwe'], 4: [15, 'wewew'], 5: [15, 'wewew'], 6: [16, 'ewwe'] });
   const STRAIN = patchRows(MID, { 3: [15, 'kkkkk'], 4: [15, 'wwwww'], 5: [15, 'weeww'], 6: [16, 'wwww'] });
+  // Tired: heavy half-closed lids, pupil sagging to the bottom.
+  const TIRED = patchRows(MID, { 3: [15, 'kkkkk'], 4: [15, 'kkkkk'], 5: [15, 'wwwew'], 6: [16, 'wwww'] });
 
   const SPR_W = 22, SPR_H = 16;
-  function bakeFrame(rows, tint) {
+  function bakeFrame(rows, tint, pal = PAL) {
     for (const r of rows) if (r.length !== SPR_W) throw new Error('sprite row width ' + r.length + ': ' + r);
     const c = document.createElement('canvas');
     c.width = SPR_W; c.height = SPR_H;
     const g = c.getContext('2d');
     rows.forEach((row, j) => [...row].forEach((ch, i) => {
       if (ch === '.') return;
-      g.fillStyle = PAL[ch]; g.fillRect(i, j, 1, 1);
+      g.fillStyle = pal[ch]; g.fillRect(i, j, 1, 1);
     }));
     if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, SPR_W, SPR_H); }
     return c;
   }
-  const FR = {
-    mid: bakeFrame(MID), up: bakeFrame(UP), down: bakeFrame(DOWN),
-    strain: bakeFrame(STRAIN), hit: bakeFrame(HIT, 'rgba(255,70,70,0.35)'),
-    // Duel rival: the same bird tinted blue, drawn as a ghost.
+  // Duel rival: the classic bird tinted blue, drawn as a ghost.
+  const RV = {
     rival: bakeFrame(MID, 'rgba(79,195,247,0.6)'), rivalUp: bakeFrame(UP, 'rgba(79,195,247,0.6)'),
     rivalHit: bakeFrame(HIT, 'rgba(79,195,247,0.6)'),
   };
+
+  // ---------- Skins (unlocked by lifetime reps; Diamond for Day Pass / Pro) ----------
+  const SKIN_KEY = 'pushup-bird-skin';
+  const SKINS = [
+    { id: 'classic', name: 'CLASSIC', need: 0 },
+    { id: 'band', name: 'HEADBAND', need: 100, patch: { 2: [5, 'rrrrrrrrr'], 3: [4, 'mmmmmmmmmm'] } },
+    { id: 'shades', name: 'SHADES', need: 250, patch: { 3: [14, 'kkkkkkk'], 4: [14, 'kweeeek'], 5: [14, 'keeeeek'], 6: [15, 'kkkkkk'] } },
+    { id: 'gold', name: 'GOLD', need: 500, pal: { y: '#f2c230', l: '#fff4b0', o: '#c48a12', d: '#8f5f08', k: '#3a2405' } },
+    { id: 'fire', name: 'FIRE BIRD', need: 1000, pal: { y: '#ff7b22', l: '#ffd36b', o: '#d93a14', d: '#9e1f0e', r: '#ffd200', m: '#e0a000' } },
+    { id: 'diamond', name: 'DIAMOND', pro: true, pal: { y: '#7fe0ff', l: '#e8fcff', o: '#3aa0d8', d: '#1f6a9c', k: '#0c2a44' } },
+  ];
+  const skinDef = (id) => SKINS.find((k) => k.id === id) || SKINS[0];
+  function buildFrames(id) {
+    const sk = skinDef(id), pal = { ...PAL, ...(sk.pal || {}) };
+    const b = (rows, tint) => bakeFrame(sk.patch ? patchRows(rows, sk.patch) : rows, tint, pal);
+    return {
+      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED), hit: b(HIT, 'rgba(255,70,70,0.35)'),
+      ghost: b(MID, 'rgba(255,255,255,0.55)'), ghostUp: b(UP, 'rgba(255,255,255,0.55)'), ghostHit: b(HIT, 'rgba(255,255,255,0.55)'),
+    };
+  }
+  let skinId = localStorage.getItem(SKIN_KEY) || 'classic';
+  let FR = buildFrames(skinId);
+  if (!skinUnlocked(skinDef(skinId))) { skinId = 'classic'; FR = buildFrames(skinId); } // e.g. a Day Pass ran out
 
   // The rival's bird, positioned from their last reported height. Plank gaps are centred on
   // each player's own hold height, so the rival is drawn relative to our anchor.
@@ -1125,7 +1400,7 @@
     const target = (duel.oppY - duel.oppA) * H + anchor;
     duel.showY = duel.showY === null ? target : duel.showY + (target - duel.showY) * 0.22; // glides between 6/s updates
     const dead = duel.oppMs !== null;
-    const frame = dead ? FR.rivalHit : Math.floor(bird.flapT * 8) % 2 ? FR.rivalUp : FR.rival;
+    const frame = dead ? RV.rivalHit : Math.floor(bird.flapT * 8) % 2 ? RV.rivalUp : RV.rival;
     blitBird(frame, bird.x, duel.showY, dead ? 0.6 : 0, 1, 1, dead ? 0.35 : 0.55);
     text(duel.oppName, bird.x, duel.showY - 38 * unit, 8 * unit, { fill: '#4fc3f7' });
   }
@@ -1135,15 +1410,17 @@
     const fast = H * 0.08;
     // Straining: low in the frame (bottom of a rep) and barely moving.
     if (state === 'playing' && bird.y > H * 0.72 && Math.abs(bird.vy) < H * 0.15) return FR.strain;
+    if (state === 'playing' && run.fatigue > 0.5 && Math.abs(bird.vy) < H * 0.25) return FR.tired;
     if (bird.vy < -fast) return Math.floor(bird.flapT * 18) % 2 ? FR.up : FR.mid;   // frantic flapping upward
     if (bird.vy > fast) return FR.down;                                              // gliding down
     return [FR.mid, FR.up, FR.mid, FR.down][Math.floor(bird.flapT * 6) % 4];          // idle flap
   }
 
-  function blitBird(frame, x, y, rot, sx, sy, alpha) {
+  function blitBird(frame, x, y, rot, sx, sy, alpha, glow) {
     const px = 3.4 * unit * tune.spriteScale, w = SPR_W * px, h = SPR_H * px;
     ctx.save();
     ctx.globalAlpha = alpha;
+    if (glow) { ctx.shadowColor = glow.color; ctx.shadowBlur = glow.blur; }
     ctx.imageSmoothingEnabled = false;
     ctx.translate(x, y);
     ctx.rotate(rot);
@@ -1160,9 +1437,11 @@
     const stretch = state === 'over' ? 0 : Math.min(0.28, Math.abs(bird.vy) / (H * 1.6));
     const q = bird.squash;
     const sx = (1 - stretch * 0.5) * (1 + q), sy = (1 + stretch) * (1 - q);
-    blitBird(frame, bird.x, bird.y, bird.rot, sx, sy, 1);
-    // Sweat drops while straining.
-    if (frame === FR.strain) {
+    const lvl = Math.round(Math.min(4, run.flame || 0));
+    const glow = state === 'playing' && lvl >= 1 ? { color: HEAT_COLORS[lvl], blur: (10 + 8 * lvl) * unit } : null;
+    blitBird(frame, bird.x, bird.y, bird.rot, sx, sy, 1, glow);
+    // Sweat drops while straining or tired.
+    if (frame === FR.strain || frame === FR.tired) {
       const d = (bird.flapT * 2.2) % 1;
       const px = 3.4 * unit;
       ctx.save();
@@ -1205,14 +1484,15 @@
       const pop = 1 + 0.45 * fx.scorePop * fx.scorePop;
       ctx.save();
       ctx.translate(W / 2, H * 0.12); ctx.scale(pop, pop);
-      text(fmtScore(mode, score), 0, 0, big);
+      text(fmtScore(mode, score), 0, 0, big, { fill: run.heat >= 2 ? '#ffe2b0' : '#fff' });
       ctx.restore();
+      if (daily.on) text(`DAILY ${todayLabel()}${ghost ? ' · BEST ' + ghost.score : ''}`, W / 2, H * 0.12 + 44 * unit, 9 * unit, { fill: '#4fc3f7' });
       return;
     }
     if (state === 'ready') {
       const posed = tracking.hasPose || keyboardY !== null;
       if (!posed) drawPoseGuide();
-      text('FLAPPY REPS', W / 2, H * 0.18, 34 * unit, { fill: '#f6c948' });
+      text(daily.on ? `DAILY · ${todayLabel()}` : 'FLAPPY REPS', W / 2, H * 0.18, (daily.on ? 26 : 34) * unit, { fill: daily.on ? '#4fc3f7' : '#f6c948' });
       const needRep = posed && keyboardY === null && !EXACT && !MODES[mode].hold && !calibrated();
       if (needRep) {
         const [head, step] = calibText();
@@ -1220,7 +1500,7 @@
         text(step, W / 2, H * 0.3, small);
         if (stateTimer > 20000) text('PHONE ~1 M AWAY, HEAD + SHOULDERS IN VIEW', W / 2, H * 0.345, 9 * unit, { fill: '#f6c948' });
       } else text(posed ? 'HOLD STILL…' : MODES[mode].ready, W / 2, H * 0.26, small);
-      text('BEST ' + fmtScore(mode, best), W / 2, H * (needRep ? 0.39 : 0.31), small);
+      text(daily.on ? `TODAY'S BEST ${fmtScore(mode, dailyBest())}` : 'BEST ' + fmtScore(mode, best), W / 2, H * (needRep ? 0.39 : 0.31), small);
       return;
     }
     if (state === 'countdown') {
@@ -1234,14 +1514,24 @@
       return;
     }
     if (state === 'over') {
-      const pw = Math.min(W * 0.8, 380 * unit), ph = 150 * unit;
-      const px0 = W / 2 - pw / 2, py0 = H * 0.16;
+      // Stats card: also the last two seconds of every shared clip, so it carries the URL.
+      const hold = !!MODES[mode].hold;
+      const lines = [];
+      if (!hold && run.reps > 0) lines.push(`${run.reps} REPS · ${run.full} FULL RANGE`);
+      if (!hold && run.reps >= 6) lines.push(run.tiredAt !== null ? `SLOWED DOWN AT REP ${run.tiredAt}` : 'NEVER SLOWED DOWN');
+      if (run.peakHeat > 0) lines.push(`PEAK: ${HEAT_NAMES[run.peakHeat].replace('!', '')}`);
+      if (daily.on) lines.push(`DAILY ${todayLabel()} · TODAY'S BEST ${fmtScore(mode, dailyBest())}`);
+      const pw = Math.min(W * 0.9, 560 * unit), lh = 28 * unit, ph = 132 * unit + lines.length * lh + 36 * unit;
+      const px0 = W / 2 - pw / 2, py0 = H * 0.14;
       text('GAME OVER', W / 2, py0 - 34 * unit, 30 * unit, { fill: '#f6c948' });
       panel(px0, py0, pw, ph);
-      text(MODES[mode].label, W / 2, py0 + ph * 0.24, small, { fill: '#e0432b' });
-      text(fmtScore(mode, score), W / 2, py0 + ph * 0.48, mid, { fill: '#3d1c12', stroke: '#ded895' });
+      const ink = { fill: '#3d1c12', stroke: '#ded895' };
+      text(MODES[mode].label, W / 2, py0 + 24 * unit, small, { fill: '#e0432b' });
+      text(fmtScore(mode, score), W / 2, py0 + 60 * unit, mid, ink);
       const tag = lastRank === 1 && score > 0 ? 'NEW #1!' : lastRank > 0 ? `#${lastRank} ALL-TIME` : 'BEST ' + fmtScore(mode, best);
-      text(tag, W / 2, py0 + ph * 0.78, small, { fill: '#3d1c12', stroke: '#ded895' });
+      text(tag, W / 2, py0 + 94 * unit, 11 * unit, ink);
+      lines.forEach((l, i) => text(l, W / 2, py0 + 128 * unit + i * lh, Math.min(12 * unit, (pw - 30 * unit) / (l.length * 1.02)), ink));
+      text('PLAY FREE AT FLAPPYREPS.COM', W / 2, py0 + ph - 20 * unit, 12 * unit, { fill: '#e0432b', stroke: '#ded895' });
       const left = Math.max(0, Math.ceil((OVER_MS - stateTimer) / 1000));
       text(`NEXT RUN IN ${left}s · TAP TO GO NOW`, W / 2, py0 + ph + 26 * unit, 9 * unit, { fill: '#fff' });
       if (againTimer) againTimer.textContent = `auto in ${left}s`;
@@ -1443,6 +1733,7 @@
     if (!tune.raw) drawGround();
     if (!attract && !tune.raw) drawTrackingGuide();
     if (!attract) drawRival();
+    if (!attract) drawGhost();
     drawBird();
     if (state === 'over' && !tune.raw && !(duel.on && duel.outlasted)) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
     if (!tune.raw) drawFx();
@@ -1728,9 +2019,46 @@
 
   startBtn.addEventListener('click', () => {
     ensureAudio();
+    daily.on = DAILY_URL;
     if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); return; }
     enterGame();
   });
+  document.getElementById('intro-daily').addEventListener('click', () => {
+    ensureAudio();
+    daily.on = true;
+    if (window.Paywall && !Paywall.canPlay(mode)) { Paywall.show(); return; }
+    enterGame();
+  });
+
+  // Skins screen: every bird with its unlock state; tap an unlocked one to wear it.
+  const skinsEl = document.getElementById('skins');
+  function renderSkins() {
+    const total = lifetimeReps();
+    document.getElementById('skins-total').textContent = `LIFETIME REPS: ${total}`;
+    const list = document.getElementById('skins-list');
+    list.innerHTML = '';
+    for (const sk of SKINS) {
+      const open = skinUnlocked(sk, total);
+      const li = document.createElement('li');
+      li.className = (open ? '' : 'locked') + (sk.id === skinId ? ' on' : '');
+      const c = document.createElement('canvas'); c.width = 22; c.height = 16;
+      c.getContext('2d').drawImage(buildFrames(sk.id).mid, 0, 0);
+      const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = sk.name;
+      const st = document.createElement('span'); st.className = 'st';
+      st.textContent = sk.id === skinId ? 'WEARING' : open ? 'TAP TO WEAR' : sk.pro ? 'DAY PASS / PRO' : `${sk.need - total} REPS TO GO`;
+      li.append(c, nm, st);
+      if (!open && !sk.pro) {
+        const bar = document.createElement('div'); bar.className = 'skins-bar';
+        const fill = document.createElement('i'); fill.style.width = `${Math.min(100, (total / sk.need) * 100)}%`;
+        bar.append(fill); li.append(bar);
+      }
+      if (open) li.addEventListener('click', () => { setSkin(sk.id); renderSkins(); });
+      list.append(li);
+    }
+  }
+  document.getElementById('intro-skins').addEventListener('click', () => { renderSkins(); skinsEl.hidden = false; });
+  document.getElementById('skins-close').addEventListener('click', () => { skinsEl.hidden = true; });
+  skinsEl.addEventListener('click', (e) => { if (e.target === skinsEl) skinsEl.hidden = true; });
 
   // Leave the intro for the ready screen and turn the camera on (solo Play, or joining a duel).
   async function enterGame() {
@@ -1784,7 +2112,7 @@
   window.addEventListener('pagehide', () => { if (duel.on) duelSend('bye'); });
 
   // Expose a little for debugging in the console.
-  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse,
+  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse, run, daily, get ghost() { return ghost; }, setSkin, get skin() { return skinId; }, lifetimeReps,
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
     _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
       // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.
