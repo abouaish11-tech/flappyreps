@@ -682,6 +682,7 @@
       heat: 0, peakHeat: 0, flame: 0, steamT: 0, emberT: 0,
       dir: 0, ext: null, extT: 0, turnY: null, turnT: 0, halves: [], reps: 0, full: 0,
       speeds: [], fatigue: 0, tiredAt: null, tiredShown: false, streak: 0, bestStreak: 0,
+      oh: 0, smoke: [], smokeT: 0, sparkT: 0,
       t: 0, pipeCount: 0, bossBanner: false, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
     });
   }
@@ -722,7 +723,7 @@
       run.fatigue = Math.min(1, Math.max(0, (0.88 - recent / base) / 0.3));
       if (run.fatigue > 0.45 && !run.tiredShown) {
         run.tiredShown = true; if (run.tiredAt === null) run.tiredAt = run.reps;
-        fx.popups.push({ x: bird.x, y: bird.y - 44 * unit, t: 0, text: 'TIRED…', fill: '#9ad0ff', size: 12 });
+        fx.banner = { text: 'OVERHEATING!', t: 0, fill: '#ff4a2a' };
       }
       if (before > 0.45 && run.fatigue < 0.15) {
         run.tiredShown = false;
@@ -764,6 +765,85 @@
       }
     }
   }
+  // Overheating = tiredness made visible. run.oh follows run.fatigue smoothly; past each OH_AT
+  // threshold the bird ramps yellow → orange → red (OH_RAMP frames), grey smoke pours off its
+  // back, sparks fly, the screen edges glow red and the thermometer fills. Cosmetic only.
+  const OH_AT = [0.15, 0.45, 0.75];                    // WARM, HOT, OVERHEAT
+  function ohStage() {
+    if (state !== 'playing' || !run.oh) return 0;
+    return run.oh > OH_AT[2] ? 3 : run.oh > OH_AT[1] ? 2 : run.oh > OH_AT[0] ? 1 : 0;
+  }
+  function overheatFx(dt) {
+    run.oh += (run.fatigue - run.oh) * Math.min(1, dt * 1.5);
+    const st = ohStage();
+    if (st >= 1) {
+      run.smokeT += dt;
+      const every = [0, 0.08, 0.05, 0.035][st];
+      while (run.smokeT > every) {
+        run.smokeT -= every;
+        const big = 0.7 + Math.random() * 0.6;
+        run.smoke.push({ x: bird.x - 22 * unit, y: bird.y + (Math.random() - 0.7) * 14 * unit, vx: -(170 + Math.random() * 60) * unit, vy: -(20 + Math.random() * 50) * unit,
+          r0: (6 + 3 * st) * unit, r1: (14 + 9 * st) * big * unit, age: 0, life: 0.7 + 0.25 * st });
+      }
+    }
+    if (st >= 2) {
+      run.sparkT += dt;
+      const every = st >= 3 ? 0.06 : 0.13;
+      while (run.sparkT > every) {
+        run.sparkT -= every;
+        fx.particles.push({ x: bird.x + (Math.random() - 0.3) * 40 * unit, y: bird.y - 14 * unit, vx: (Math.random() - 0.5) * 70 * unit, vy: -(90 + Math.random() * 90) * unit, g: 120 * unit,
+          life: 0.45, age: 0, size: (4 + Math.random() * 4) * unit, color: ['#ffe14a', '#ff9a1f', '#ff4a1a'][(Math.random() * 3) | 0], spin: 0, rot: 0 });
+      }
+    }
+  }
+  // Smoke puffs merge on a low-res layer (dark rims, then body, then highlights) that is upscaled
+  // without smoothing, so they read as pixel art; old puffs switch to a checker dither as they fade.
+  let smokeLayer = null;
+  const smokePat = {};
+  function smokeFill(sctx, color, dither) {
+    if (!dither) return color;
+    if (!smokePat[color]) {
+      const c = document.createElement('canvas'); c.width = c.height = 2;
+      const x = c.getContext('2d'); x.fillStyle = color; x.fillRect(0, 0, 1, 1); x.fillRect(1, 1, 1, 1);
+      smokePat[color] = sctx.createPattern(c, 'repeat');
+    }
+    return smokePat[color];
+  }
+  function drawSmoke() {
+    if (!run.smoke || !run.smoke.length) return;
+    const cell = Math.max(2, Math.round(5 * unit)), lw = Math.ceil(W / cell), lh = Math.ceil(H / cell);
+    if (!smokeLayer || smokeLayer.width !== lw || smokeLayer.height !== lh) {
+      smokeLayer = document.createElement('canvas'); smokeLayer.width = lw; smokeLayer.height = lh;
+      for (const k in smokePat) delete smokePat[k];
+    }
+    const s = smokeLayer.getContext('2d');
+    s.clearRect(0, 0, lw, lh);
+    const pass = (grow, color, hl) => {
+      for (const p of run.smoke) {
+        const k = p.age / p.life, r = (p.r0 + (p.r1 - p.r0) * Math.sqrt(k)) / cell;
+        s.fillStyle = smokeFill(s, color, k > 0.6);
+        s.beginPath();
+        s.arc(p.x / cell - (hl ? r * 0.25 : 0), p.y / cell - (hl ? r * 0.3 : 0), r * (hl ? 0.6 : 1) + grow, 0, Math.PI * 2);
+        s.fill();
+      }
+    };
+    pass(1, '#3a3a48'); pass(0, '#8d8d9c'); pass(0, '#c9c9d4', true);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false; ctx.globalAlpha = 0.92;
+    ctx.drawImage(smokeLayer, 0, 0, lw * cell, lh * cell);
+    ctx.restore();
+  }
+  // Red heat haze on the screen edges once the bird is HOT, pulsing.
+  function drawOverheatHaze() {
+    if (state !== 'playing') return;
+    const k = Math.min(1, Math.max(0, (run.oh - OH_AT[1]) / (1 - OH_AT[1])));
+    if (k <= 0) return;
+    const pulse = 0.85 + 0.15 * Math.sin(run.t * 5.5);
+    const rg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.7);
+    rg.addColorStop(0, 'rgba(255,60,20,0)'); rg.addColorStop(1, `rgba(255,40,10,${(0.25 + 0.3 * k) * pulse})`);
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+  }
+
   // Ghost: record this run's path; draw today's best attempt on the same course.
   function ghostTick(dt) {
     if (!ghostRec) return;
@@ -989,6 +1069,7 @@
     run.t += dt;
     if (!hold) trackReps(now);
     heatFx(dt);
+    overheatFx(dt);
     ghostTick(dt);
     if (hold) {
       holdT += dt;
@@ -1120,6 +1201,10 @@
       q.age += dt; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; q.rot += q.spin * dt;
     }
     fx.particles = fx.particles.filter((q) => q.age < q.life);
+    if (run.smoke) {
+      for (const p of run.smoke) { p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+      run.smoke = run.smoke.filter((p) => p.age < p.life);
+    }
     if (fx.banner) { fx.banner.t += dt; if (fx.banner.t > 1.6) fx.banner = null; }
   }
   function drawFx() {
@@ -1350,6 +1435,11 @@
   const STRAIN = patchRows(MID, { 3: [15, 'kkkkk'], 4: [15, 'wwwww'], 5: [15, 'weeww'], 6: [16, 'wwww'] });
   // Tired: heavy half-closed lids, pupil sagging to the bottom.
   const TIRED = patchRows(MID, { 3: [15, 'kkkkk'], 4: [15, 'kkkkk'], 5: [15, 'wwwew'], 6: [16, 'wwww'] });
+  // Overheating palettes for WARM / HOT / OVERHEAT: yellow → orange → red (never brown, which reads as dirt).
+  const OH_RAMP = [null,
+    { y: '#f9b52a', l: '#fcd77a', o: '#e07a2b', d: '#b5531a' },
+    { y: '#f57a2b', l: '#f9b07a', o: '#d9461f', d: '#9e2f12' },
+    { y: '#e2382b', l: '#f2806e', o: '#b02a1d', d: '#74140c', r: '#ffb52e', m: '#d98a12' }];
 
   const SPR_W = 22, SPR_H = 16;
   function bakeFrame(rows, tint, pal = PAL) {
@@ -1383,9 +1473,11 @@
   const skinDef = (id) => SKINS.find((k) => k.id === id) || SKINS[0];
   function buildFrames(id) {
     const sk = skinDef(id), pal = { ...PAL, ...(sk.pal || {}) };
-    const b = (rows, tint) => bakeFrame(sk.patch ? patchRows(rows, sk.patch) : rows, tint, pal);
+    const b = (rows, tint, p = pal) => bakeFrame(sk.patch ? patchRows(rows, sk.patch) : rows, tint, p);
+    const heated = (ramp) => { const p = { ...pal, ...ramp }; return { mid: b(MID, null, p), up: b(UP, null, p), down: b(DOWN, null, p), strain: b(STRAIN, null, p), tired: b(TIRED, null, p) }; };
     return {
-      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED, 'rgba(120,170,255,0.28)'), hit: b(HIT, 'rgba(255,70,70,0.35)'),
+      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED), hit: b(HIT, 'rgba(255,70,70,0.35)'),
+      oh: OH_RAMP.map((r) => r && heated(r)),
       ghost: b(MID, 'rgba(255,255,255,0.55)'), ghostUp: b(UP, 'rgba(255,255,255,0.55)'), ghostHit: b(HIT, 'rgba(255,255,255,0.55)'),
     };
   }
@@ -1408,13 +1500,13 @@
 
   function pickFrame() {
     if (state === 'over' && !(duel.on && duel.outlasted)) return FR.hit;
-    const fast = H * 0.08;
+    const fast = H * 0.08, S = FR.oh[ohStage()] || FR;   // overheating recolours every frame
+    if (state === 'playing' && run.fatigue > 0.45 && Math.abs(bird.vy) < H * 0.6) return S.tired;
     // Straining: low in the frame (bottom of a rep) and barely moving.
-    if (state === 'playing' && run.fatigue > 0.45 && Math.abs(bird.vy) < H * 0.6) return FR.tired;
-    if (state === 'playing' && bird.y > H * 0.72 && Math.abs(bird.vy) < H * 0.15) return FR.strain;
-    if (bird.vy < -fast) return Math.floor(bird.flapT * 18) % 2 ? FR.up : FR.mid;   // frantic flapping upward
-    if (bird.vy > fast) return FR.down;                                              // gliding down
-    return [FR.mid, FR.up, FR.mid, FR.down][Math.floor(bird.flapT * 6) % 4];          // idle flap
+    if (state === 'playing' && bird.y > H * 0.72 && Math.abs(bird.vy) < H * 0.15) return S.strain;
+    if (bird.vy < -fast) return Math.floor(bird.flapT * 18) % 2 ? S.up : S.mid;   // frantic flapping upward
+    if (bird.vy > fast) return S.down;                                             // gliding down
+    return [S.mid, S.up, S.mid, S.down][Math.floor(bird.flapT * 6) % 4];           // idle flap
   }
 
   function blitBird(frame, x, y, rot, sx, sy, alpha, glow) {
@@ -1438,23 +1530,21 @@
     const stretch = state === 'over' ? 0 : Math.min(0.28, Math.abs(bird.vy) / (H * 1.6));
     const q = bird.squash;
     const sx = (1 - stretch * 0.5) * (1 + q), sy = (1 + stretch) * (1 - q);
-    const lvl = Math.round(Math.min(4, run.flame || 0));
-    const glow = state === 'playing' && lvl >= 1 ? { color: HEAT_COLORS[lvl], blur: (10 + 8 * lvl) * unit } : null;
-    blitBird(frame, bird.x, bird.y, bird.rot, sx, sy, 1, glow);
-    // Sweat drops while straining or tired (two, bigger, when tired).
-    if (frame === FR.strain || frame === FR.tired) {
-      const tiredNow = frame === FR.tired;
-      const px = 3.4 * unit * (tiredNow ? 1.5 : 1);
-      for (const [ox, phase] of tiredNow ? [[24, 0], [-14, 0.5]] : [[24, 0]]) {
-        const d = (bird.flapT * 2.2 + phase) % 1;
-        ctx.save();
-        ctx.translate(bird.x + ox * unit, bird.y - 30 * unit + d * 30 * unit);
-        ctx.globalAlpha = 1 - d;
-        ctx.fillStyle = '#4fc3f7';
-        ctx.fillRect(0, 0, px, px * 2); ctx.fillRect(-px, px, px * 3, px);
-        ctx.restore();
-      }
-      if (tiredNow) text('TIRED', bird.x, bird.y - 46 * unit, 10 * unit, { fill: '#9ad0ff' });
+    const lvl = Math.round(Math.min(4, run.flame || 0)), st = ohStage();
+    let glow = state === 'playing' && lvl >= 1 ? { color: HEAT_COLORS[lvl], blur: (10 + 8 * lvl) * unit } : null;
+    if (st >= 1) glow = { color: ['', '#ff9a2a', '#ff6a1f', '#ff2a12'][st], blur: (12 + 8 * st) * unit };
+    // Overheating: the bird sags nose-down and rattles.
+    const jx = st >= 3 ? (Math.random() - 0.5) * 4 * unit : 0, jy = st >= 3 ? (Math.random() - 0.5) * 3 * unit : 0;
+    blitBird(frame, bird.x + jx, bird.y + jy, bird.rot + (st >= 3 ? 0.14 : 0), sx, sy, 1, glow);
+    // Sweat drop while straining at the bottom of a rep.
+    if (frame === FR.strain) {
+      const px = 3.4 * unit, d = (bird.flapT * 2.2) % 1;
+      ctx.save();
+      ctx.translate(bird.x + 24 * unit, bird.y - 30 * unit + d * 30 * unit);
+      ctx.globalAlpha = 1 - d;
+      ctx.fillStyle = '#4fc3f7';
+      ctx.fillRect(0, 0, px, px * 2); ctx.fillRect(-px, px, px * 3, px);
+      ctx.restore();
     }
   }
 
@@ -1492,7 +1582,10 @@
       text(fmtScore(mode, score), 0, 0, big, { fill: run.heat >= 2 ? '#ffe2b0' : '#fff' });
       ctx.restore();
       if (daily.on) text(`DAILY ${todayLabel()}${ghost ? ' · BEST ' + ghost.score : ''}`, W / 2, H * 0.12 + 44 * unit, 9 * unit, { fill: '#4fc3f7' });
-      if (!MODES[mode].hold) drawEnergy(W / 2, H * 0.12 + (daily.on ? 66 : 48) * unit);
+      if (!MODES[mode].hold) {
+        if (run.reps > 0) text(`${run.reps} REPS`, W / 2, H * 0.12 + (daily.on ? 66 : 48) * unit, 10 * unit);
+        drawThermo();
+      }
       return;
     }
     if (state === 'ready') {
@@ -1524,7 +1617,7 @@
       const hold = !!MODES[mode].hold;
       const lines = [];
       if (!hold && run.reps > 0) lines.push(`${run.reps} REPS · ${run.full} FULL RANGE`);
-      if (!hold && run.reps >= 6) lines.push(run.tiredAt !== null ? `SLOWED DOWN AT REP ${run.tiredAt}` : 'NEVER SLOWED DOWN');
+      if (!hold && run.reps >= 6) lines.push(run.tiredAt !== null ? `OVERHEATED AT REP ${run.tiredAt}` : 'NEVER OVERHEATED');
       if (run.peakHeat > 0) lines.push(`PEAK: ${HEAT_NAMES[run.peakHeat].replace('!', '')}`);
       if (daily.on) lines.push(`DAILY ${todayLabel()} · TODAY'S BEST ${fmtScore(mode, dailyBest())}`);
       const pw = Math.min(W * 0.9, 560 * unit), lh = 28 * unit, ph = 132 * unit + lines.length * lh + 36 * unit;
@@ -1545,18 +1638,23 @@
     }
   }
 
-  // Energy bar: drains as reps slow down (fatigue), so tiredness is always visible.
-  function drawEnergy(cx, cy) {
-    const e = 1 - (run.fatigue || 0), bw = 190 * unit, bh = 16 * unit;
-    const col = e > 0.6 ? '#7ec850' : e > 0.3 ? '#f6c948' : '#e0432b';
+  // Thermometer on the right edge: fills yellow → orange → red as the bird overheats (tiredness).
+  function drawThermo() {
+    const k = Math.min(1, run.oh || 0), st = ohStage();
+    const x = W - 34 * unit, top = H * 0.2, th = Math.min(H * 0.22, 190 * unit), tw = 14 * unit, br = 14 * unit, by = top + th + br * 0.6;
+    const col = st >= 3 ? '#ff2a12' : st >= 2 ? '#ff8a1f' : st >= 1 ? '#ffb52a' : '#ffd23f';
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(cx - bw / 2 - 3 * unit, cy - bh / 2 - 3 * unit, bw + 6 * unit, bh + 6 * unit);
-    ctx.fillStyle = '#3d1c12'; ctx.fillRect(cx - bw / 2, cy - bh / 2, bw, bh);
-    ctx.fillStyle = col; ctx.fillRect(cx - bw / 2, cy - bh / 2, bw * e, bh);
+    ctx.fillStyle = 'rgba(10,10,20,0.6)'; ctx.fillRect(x - 22 * unit, top - 12 * unit, 44 * unit, th + br * 2 + 20 * unit);
+    ctx.fillStyle = '#fff'; ctx.fillRect(x - tw / 2, top, tw, th);
+    ctx.beginPath(); ctx.arc(x, by, br, 0, Math.PI * 2); ctx.fill();
+    const fill = th * (0.1 + 0.9 * k);
+    ctx.fillStyle = col; ctx.fillRect(x - tw / 2 + 3 * unit, top + th - fill, tw - 6 * unit, fill + br * 0.6);
+    ctx.beginPath(); ctx.arc(x, by, br - 4 * unit, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2b1b0e';
+    for (let i = 0; i < 4; i++) ctx.fillRect(x + tw / 2 - 5 * unit, top + th * (i + 1) / 5, 5 * unit, 2 * unit);
     ctx.restore();
-    const tired = run.fatigue > 0.45, blink = Math.floor(performance.now() / 350) % 2;
-    text(tired ? 'TIRED!' : 'ENERGY', cx - bw / 2 - 10 * unit, cy, 10 * unit, { align: 'right', fill: tired ? (blink ? '#ff6b57' : '#ffffff') : '#ffffff' });
-    if (run.reps > 0) text(`${run.reps} REPS`, cx + bw / 2 + 10 * unit, cy, 10 * unit, { align: 'left' });
+    const blink = Math.floor(performance.now() / 350) % 2;
+    text(st >= 2 ? 'HOT!' : 'TEMP', x, by + br + 14 * unit, 8 * unit, { fill: st >= 2 && blink ? '#ff4a2a' : '#fff' });
   }
 
   function drawDuelHUD(big, mid, small) {
@@ -1754,6 +1852,7 @@
     if (!attract && !tune.raw) drawTrackingGuide();
     if (!attract) drawRival();
     if (!attract) drawGhost();
+    if (!attract) { drawOverheatHaze(); drawSmoke(); }
     drawBird();
     if (state === 'over' && !tune.raw && !(duel.on && duel.outlasted)) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(-W, -H, W * 3, H * 3); drawBird(); }
     if (!tune.raw) drawFx();
