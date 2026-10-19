@@ -1236,6 +1236,7 @@
     burst(bird.x, bird.y, 22, ['#f7d21c', '#e39f2b', '#fbe58a', '#ffffff'], H * 0.5, H * 1.1);
   }
   function updateFx(dt) {
+    skinFx(dt);
     fx.shake = Math.max(0, fx.shake - dt * 2.2);
     fx.flash = Math.max(0, fx.flash - dt * 3.5);
     fx.scorePop = Math.max(0, fx.scorePop - dt * 3.2);
@@ -1258,7 +1259,8 @@
       ctx.globalAlpha = a;
       ctx.translate(q.x, q.y); ctx.rotate(q.rot);
       ctx.fillStyle = q.color;
-      ctx.fillRect(-q.size / 2, -q.size / 2, q.size, q.size);
+      if (q.star) { const z = q.size * (1 - q.age / q.life * 0.5); ctx.fillRect(-z / 2, -z / 8, z, z / 4); ctx.fillRect(-z / 8, -z / 2, z / 4, z); }
+      else ctx.fillRect(-q.size / 2, -q.size / 2, q.size, q.size);
       ctx.restore();
     }
     for (const p of fx.popups) {
@@ -1489,17 +1491,22 @@
     { y: '#f57a2b', l: '#f9b07a', o: '#d9461f', d: '#9e2f12' },
     { y: '#e2382b', l: '#f2806e', o: '#b02a1d', d: '#74140c', r: '#ffb52e', m: '#d98a12' }];
 
-  const SPR_W = 22, SPR_H = 16;
-  function bakeFrame(rows, tint, pal = PAL) {
+  // Frames are padded (SPR_PX / SPR_PY on each side) so skin accessories (crowns, flames, tails,
+  // antennas) can stick out of the 22x16 body; the body stays centred, so drawing code uses the
+  // frame's own size. `acc` layers are { x, y, rows } in body coordinates (may be negative).
+  const SPR_W = 22, SPR_H = 16, SPR_PX = 6, SPR_PY = 7;
+  function bakeFrame(rows, tint, pal = PAL, acc = null) {
     for (const r of rows) if (r.length !== SPR_W) throw new Error('sprite row width ' + r.length + ': ' + r);
     const c = document.createElement('canvas');
-    c.width = SPR_W; c.height = SPR_H;
+    c.width = SPR_W + 2 * SPR_PX; c.height = SPR_H + 2 * SPR_PY;
     const g = c.getContext('2d');
-    rows.forEach((row, j) => [...row].forEach((ch, i) => {
+    const paint = (rws, ox, oy) => rws.forEach((row, j) => [...row].forEach((ch, i) => {
       if (ch === '.') return;
-      g.fillStyle = pal[ch]; g.fillRect(i, j, 1, 1);
+      g.fillStyle = pal[ch]; g.fillRect(SPR_PX + ox + i, SPR_PY + oy + j, 1, 1);
     }));
-    if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, SPR_W, SPR_H); }
+    paint(rows, 0, 0);
+    if (acc) for (const layer of acc) paint(layer.rows, layer.x, layer.y);
+    if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, c.width, c.height); }
     return c;
   }
   // Duel rival: the classic bird tinted blue, drawn as a ghost.
@@ -1510,23 +1517,68 @@
 
   // ---------- Skins (unlocked by lifetime reps; Diamond for Day Pass / Pro) ----------
   const SKIN_KEY = 'pushup-bird-skin';
+  // Skin art: palette swaps, sprite patches (rows rewritten in place), accessory layers per flap
+  // frame (`acc.mid` / `acc.up` / `acc.down`), `facet` (crystal pattern over the body), and live
+  // effects in `fx` (drawn by drawBird / skinFx): glow colour or 'prism', shine sweep, sparkles,
+  // a lens glint, embers, shadow afterimages.
+  // Two-pixel ribbon tails trailing off the back of a head band (a = band colour, b = shade).
+  const BAND_TAILS = (a, b) => {
+    const t = (rows) => [{ x: -6, y: rows[0], rows: rows.slice(1).map((r) => r.replace(/a/g, a).replace(/b/g, b)) }];
+    return {
+      mid: t([2, '......aaaaa', '...aaaabbbb', '.aaabbb....', 'aabb.......', 'bb.........']),
+      up: t([0, 'aa.........', 'abaa.......', '..bbaaaaaaa', '....bbbbbbb']),
+      down: t([2, '......aaaaa', '....aabbbbb', '..aabb.....', '.abb.......', 'ab.........', 'b..........']),
+    };
+  };
+  const FLAMES = {
+    mid: [{ x: 6, y: -6, rows: ['....F....', '...FOF..F', '..FOYOF.F', '.FOYYYOFO', 'FOYYWYYOF', 'FOYYYYYOF'] }],
+    up: [{ x: 6, y: -6, rows: ['..F....F.', '.FOF..FOF', '.FOYF.FYF', 'FOYYOFOYF', 'FOYWYYYOF', 'FOYYYYYOF'] }],
+  };
+  FLAMES.down = FLAMES.mid;
+  const CROWN = [{ x: 5, y: -6, rows: ['.R...B...R.', 'kGk.kGk.kGk', 'kGGkGGGkGGk', 'kHGGGRGGGHk', 'kGGGGGGGGGk', 'kDDDDDDDDDk'] }];
+  const CAP = [{ x: 0, y: -2, rows: ['.......kkkkkk....', '.....kkCCCCCCkk..', 'kkkkkCCCCWCCCCCk.', 'BBBBBCCCCCCCCCCk.', 'kkkkk............'] }];
+  const ANTENNA = [{ x: 10, y: -5, rows: ['V', 'k', 'k', 'k', 'k'] }];
   const SKINS = [
     { id: 'classic', name: 'CLASSIC', need: 0 },
-    { id: 'band', name: 'HEADBAND', need: 100, patch: { 2: [5, 'rrrrrrrrr'], 3: [4, 'mmmmmmmmmm'] } },
-    { id: 'shades', name: 'SHADES', need: 250, patch: { 3: [14, 'kkkkkkk'], 4: [14, 'kweeeek'], 5: [14, 'keeeeek'], 6: [15, 'kkkkkk'] } },
-    { id: 'gold', name: 'GOLD', need: 500, pal: { y: '#f2c230', l: '#fff4b0', o: '#c48a12', d: '#8f5f08', k: '#3a2405' } },
-    { id: 'fire', name: 'FIRE BIRD', need: 1000, pal: { y: '#ff7b22', l: '#ffd36b', o: '#d93a14', d: '#9e1f0e', r: '#ffd200', m: '#e0a000' } },
-    { id: 'diamond', name: 'DIAMOND', pro: true, pal: { y: '#7fe0ff', l: '#e8fcff', o: '#3aa0d8', d: '#1f6a9c', k: '#0c2a44' } },
+    { id: 'band', name: 'HEADBAND', need: 100, patch: { 2: [4, 'rrrrrwrrrr'], 3: [4, 'mmmmmmmmmm'] }, acc: BAND_TAILS('r', 'm'), fx: { sweat: true } },
+    { id: 'shades', name: 'SHADES', need: 250, patch: { 3: [14, 'kkkkkkk'], 4: [14, 'kweeeek'], 5: [14, 'keeeeek'], 6: [15, 'kkkkkk'] },
+      pal: { C: '#2563eb', B: '#1e3a8a', W: '#ffffff' }, acc: { mid: CAP }, fx: { glint: true } },
+    { id: 'gold', name: 'GOLD', need: 500, patch: { 2: [6, 'll'], 3: [5, 'll'], 4: [5, 'l'] },
+      pal: { y: '#f2c230', l: '#fff4b0', o: '#c48a12', d: '#8f5f08', k: '#3a2405' },
+      fx: { glow: '#ffd23f', shine: true, sparkle: { every: 0.18, colors: ['#ffffff', '#fff4b0', '#ffd23f'] } } },
+    { id: 'fire', name: 'FIRE BIRD', need: 1000, pal: { y: '#ff7b22', l: '#ffd36b', o: '#d93a14', d: '#9e1f0e', r: '#ffd200', m: '#e0a000', F: '#d93a14', O: '#ff7b22', Y: '#ffd200', W: '#fff3a0' },
+      acc: FLAMES, fx: { glow: '#ff6a00', embers: true } },
+    { id: 'ninja', name: 'NINJA', need: 2000,
+      patch: { 2: [4, 'NNNNNNNNNNNNNNN'], 3: [4, 'MMMMMMMMMMMMMMMM'], 4: [14, 'ywwwek'], 5: [14, 'yyyyyy'], 6: [15, 'yyyyy'], 7: [16, 'yyy'] },
+      pal: { y: '#2b2f3d', l: '#454b62', o: '#1d2029', d: '#12141a', k: '#050608', r: '#c2410c', m: '#7c2d12', N: '#e11d48', M: '#9f1239' },
+      acc: BAND_TAILS('N', 'M'), fx: { shadow: 'rgba(124,58,237,0.75)' } },
+    { id: 'cyborg', name: 'CYBORG', need: 5000,
+      patch: { 2: [14, 'kkkkkk'], 3: [14, 'kvvvvvk'], 4: [14, 'kvVVvvk'], 5: [14, 'kvvvvvk'], 6: [15, 'kkkkkk'], 7: [3, 'nnnnnnnnnnnnnkkkk'], 10: [9, 'n'], 13: [6, 'n'] },
+      pal: { y: '#a8b0c2', l: '#dfe4ee', o: '#6b7387', d: '#454c5e', k: '#151922', r: '#6b7387', m: '#454c5e', n: '#7d8599', v: '#e11d48', V: '#ffd1dc' },
+      acc: { mid: ANTENNA }, fx: { glow: '#ff2a4a', sparkle: { every: 0.3, colors: ['#67e8f9', '#ffffff'] } } },
+    { id: 'king', name: 'KING', need: 10000,
+      pal: { y: '#8b5cf6', l: '#c4b5fd', o: '#6d28d9', d: '#4c1d95', k: '#1e0b3d', G: '#f7c62f', H: '#fff2a8', D: '#b8860b', R: '#e0245e', B: '#3b82f6' },
+      acc: { mid: CROWN }, fx: { glow: '#ffd23f', sparkle: { every: 0.14, colors: ['#ffd23f', '#fff2a8', '#ffffff'] } } },
+    { id: 'diamond', name: 'DIAMOND', pro: true, facet: true, pal: { y: '#7fe0ff', l: '#e8fcff', o: '#3aa0d8', d: '#1f6a9c', k: '#0c2a44' },
+      fx: { glow: 'prism', shine: true, sparkle: { every: 0.16, colors: ['#ffffff', '#e8fcff', '#a5f3fc', '#f0abfc'] } } },
   ];
   const skinDef = (id) => SKINS.find((k) => k.id === id) || SKINS[0];
+  // Crystal facets: diagonal light and dark lines through the body colour.
+  const facetRows = (rows) => rows.map((r, j) => [...r].map((ch, i) => (ch !== 'y' ? ch : (i + j) % 5 === 0 ? 'l' : (i - j + 50) % 7 === 0 ? 'o' : 'y')).join(''));
   function buildFrames(id) {
     const sk = skinDef(id), pal = { ...PAL, ...(sk.pal || {}) };
-    const b = (rows, tint, p = pal) => bakeFrame(sk.patch ? patchRows(rows, sk.patch) : rows, tint, p);
-    const heated = (ramp) => { const p = { ...pal, ...ramp }; return { mid: b(MID, null, p), up: b(UP, null, p), down: b(DOWN, null, p), strain: b(STRAIN, null, p), tired: b(TIRED, null, p) }; };
+    const acc = sk.acc || {};
+    const b = (rows, tint, p = pal, which = 'mid') => {
+      let r = sk.patch ? patchRows(rows, sk.patch) : rows;
+      if (sk.facet) r = facetRows(r);
+      return bakeFrame(r, tint, p, acc[which] || acc.mid || null);
+    };
+    const heated = (ramp) => { const p = { ...pal, ...ramp }; return { mid: b(MID, null, p), up: b(UP, null, p, 'up'), down: b(DOWN, null, p, 'down'), strain: b(STRAIN, null, p), tired: b(TIRED, null, p) }; };
     return {
-      mid: b(MID), up: b(UP), down: b(DOWN), strain: b(STRAIN), tired: b(TIRED), hit: b(HIT, 'rgba(255,70,70,0.35)'),
+      mid: b(MID), up: b(UP, null, pal, 'up'), down: b(DOWN, null, pal, 'down'), strain: b(STRAIN), tired: b(TIRED), hit: b(HIT, 'rgba(255,70,70,0.35)'),
       oh: OH_RAMP.map((r) => r && heated(r)),
-      ghost: b(MID, 'rgba(255,255,255,0.55)'), ghostUp: b(UP, 'rgba(255,255,255,0.55)'), ghostHit: b(HIT, 'rgba(255,255,255,0.55)'),
+      ghost: b(MID, 'rgba(255,255,255,0.55)'), ghostUp: b(UP, 'rgba(255,255,255,0.55)', pal, 'up'), ghostHit: b(HIT, 'rgba(255,255,255,0.55)'),
+      shadow: sk.fx && sk.fx.shadow ? b(MID, sk.fx.shadow) : null,
     };
   }
   let skinId = localStorage.getItem(SKIN_KEY) || 'classic';
@@ -1559,7 +1611,7 @@
   }
 
   function blitBird(frame, x, y, rot, sx, sy, alpha, glow) {
-    const px = 3.4 * unit * tune.spriteScale, w = SPR_W * px, h = SPR_H * px;
+    const px = 3.4 * unit * tune.spriteScale, w = frame.width * px, h = frame.height * px;
     ctx.save();
     ctx.globalAlpha = alpha;
     if (glow) { ctx.shadowColor = glow.color; ctx.shadowBlur = glow.blur; }
@@ -1568,6 +1620,58 @@
     ctx.rotate(rot);
     ctx.scale(sx, sy);
     ctx.drawImage(frame, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
+
+  // Skin effects. skinState.trail keeps recent bird heights for the ninja afterimages.
+  const skinState = { t: 0, emit: 0, trail: [] };
+  function skinFx(dt) {
+    skinState.t += dt;
+    skinState.trail.unshift(bird.y);
+    if (skinState.trail.length > 12) skinState.trail.length = 12;
+    const sfx2 = skinDef(skinId).fx || {}, sp = sfx2.sparkle;
+    if (sfx2.sweat && state === 'playing') {   // headband: sweat drops flicked off the back
+      skinState.sweat = (skinState.sweat || 0) + dt;
+      if (skinState.sweat > 0.4) {
+        skinState.sweat = 0;
+        fx.particles.push({ x: bird.x - 14 * unit, y: bird.y - 22 * unit, vx: -(60 + Math.random() * 70) * unit, vy: -(50 + Math.random() * 50) * unit, g: 320 * unit,
+          life: 0.55, age: 0, size: 5 * unit, color: '#7dd3fc', spin: 0, rot: 0 });
+      }
+    }
+    if (!sp || state === 'over') return;
+    skinState.emit += dt;
+    while (skinState.emit > sp.every) {
+      skinState.emit -= sp.every;
+      const a = Math.random() * Math.PI * 2, d = (18 + Math.random() * 22) * unit;
+      fx.particles.push({ x: bird.x + Math.cos(a) * d * 1.3, y: bird.y + Math.sin(a) * d, vx: 0, vy: -18 * unit, g: 0, life: 0.6, age: 0,
+        size: (6 + Math.random() * 6) * unit, color: sp.colors[(Math.random() * sp.colors.length) | 0], spin: 0, rot: 0, star: true });
+    }
+  }
+  // A bright diagonal band sweeps across the sprite every couple of seconds (gold, diamond).
+  let shineCv = null;
+  function shineOver(frame, x, y, rot, sx, sy) {
+    const k = (skinState.t % 2.4) / 0.6;
+    if (k > 1) return;
+    if (!shineCv) shineCv = document.createElement('canvas');
+    shineCv.width = frame.width; shineCv.height = frame.height;
+    const g = shineCv.getContext('2d');
+    g.drawImage(frame, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    const bx = -8 + k * (frame.width + 16);
+    g.fillStyle = 'rgba(255,255,255,0.9)';
+    g.beginPath(); g.moveTo(bx, 0); g.lineTo(bx + 3, 0); g.lineTo(bx - 5, frame.height); g.lineTo(bx - 8, frame.height); g.fill();
+    blitBird(shineCv, x, y, rot, sx, sy, 0.85);
+  }
+  // Four-point star glint on a body pixel (col, row), e.g. the shades' lens.
+  function glintAt(col, row) {
+    const k = (skinState.t % 2.6) / 0.4;
+    if (k > 1) return;
+    const px = 3.4 * unit * tune.spriteScale, dx = (col - 11 + 0.5) * px, dy = (row - 8 + 0.5) * px;
+    const c = Math.cos(bird.rot), sn = Math.sin(bird.rot), sz = 14 * unit * Math.sin(k * Math.PI);
+    ctx.save();
+    ctx.translate(bird.x + dx * c - dy * sn, bird.y + dx * sn + dy * c);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-sz / 2, -sz / 10, sz, sz / 5); ctx.fillRect(-sz / 10, -sz / 2, sz / 5, sz);
     ctx.restore();
   }
 
@@ -1582,11 +1686,21 @@
     const lvl = Math.round(Math.min(4, run.flame || 0)), st = ohStage();
     let glow = state === 'playing' && lvl >= 1 ? { color: HEAT_COLORS[lvl], blur: (10 + 8 * lvl) * unit } : null;
     if (st >= 1) glow = { color: ['', '#ff9a2a', '#ff6a1f', '#ff2a12'][st], blur: (12 + 8 * st) * unit };
+    const skinFxDef = skinDef(skinId).fx || {};
+    if (!glow && skinFxDef.glow && state !== 'over') {
+      glow = { color: skinFxDef.glow === 'prism' ? `hsl(${(skinState.t * 140) % 360},95%,65%)` : skinFxDef.glow, blur: (14 + 4 * Math.sin(skinState.t * 4)) * unit };
+    }
+    // Ninja: shadow afterimages trailing behind on the bird's recent heights.
+    if (FR.shadow && state !== 'over') {
+      for (let i = 1; i <= 3; i++) blitBird(FR.shadow, bird.x - i * 13 * unit, skinState.trail[i * 3] ?? bird.y, bird.rot, sx, sy, 0.42 - i * 0.11);
+    }
     // Overheating: the bird sags nose-down and rattles.
     const jx = st >= 3 ? (Math.random() - 0.5) * 4 * unit : 0, jy = st >= 3 ? (Math.random() - 0.5) * 3 * unit : 0;
     const stunned = raceOn() && state === 'playing' && performance.now() < duel.stunUntil;
     const alpha = stunned && Math.floor(performance.now() / 110) % 2 ? 0.3 : 1;
     blitBird(frame, bird.x + jx, bird.y + jy, bird.rot + (st >= 3 ? 0.14 : 0), sx, sy, alpha, glow);
+    if (skinFxDef.shine && state !== 'over') shineOver(frame, bird.x + jx, bird.y + jy, bird.rot + (st >= 3 ? 0.14 : 0), sx, sy);
+    if (skinFxDef.glint && state !== 'over') glintAt(18, 4);
     // Sweat drop while straining at the bottom of a rep.
     if (frame === FR.strain) {
       const px = 3.4 * unit, d = (bird.flapT * 2.2) % 1;
@@ -1748,7 +1862,7 @@
     ctx.imageSmoothingEnabled = false;
     const px = r / 14;
     ctx.translate(x + (flip ? -2 : 2) * px, y + 2 * px); if (flip) ctx.scale(-1, 1);
-    ctx.drawImage(frame, -11 * px, -8 * px, 22 * px, 16 * px);
+    ctx.drawImage(frame, -frame.width / 2 * px, -frame.height / 2 * px, frame.width * px, frame.height * px);
     ctx.restore();
   }
   function rankPill(x, y, k, reps, align) {
@@ -2439,8 +2553,9 @@
       const open = skinUnlocked(sk, total);
       const li = document.createElement('li');
       li.className = (open ? '' : 'locked') + (sk.id === skinId ? ' on' : '');
-      const c = document.createElement('canvas'); c.width = 22; c.height = 16;
-      c.getContext('2d').drawImage(buildFrames(sk.id).mid, 0, 0);
+      const f = buildFrames(sk.id).mid;
+      const c = document.createElement('canvas'); c.width = f.width; c.height = f.height;
+      c.getContext('2d').drawImage(f, 0, 0);
       const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = sk.name;
       const st = document.createElement('span'); st.className = 'st';
       st.textContent = sk.id === skinId ? 'WEARING' : open ? 'TAP TO WEAR' : sk.pro ? 'DAY PASS / PRO' : `${sk.need - total} REPS TO GO`;
@@ -2478,7 +2593,7 @@
   // Duel wiring: the intro button creates a room and shows the link; opening that link joins it.
   // Soft launch: the button shows only with ?duels=1 (or on localhost) until DUELS_PUBLIC is
   // flipped; any duel link can always be joined. Needs a transport that reaches other devices.
-  const DUELS_PUBLIC = false;
+  const DUELS_PUBLIC = true;
   const DUELS_AVAILABLE = !!window.DuelNet && (DuelNet.live || DUEL_KEYS_OK);
   const DUELS_CREATE = DUELS_AVAILABLE && (DUELS_PUBLIC || DUEL_KEYS_OK || new URLSearchParams(location.search).get('duels') === '1');
   document.getElementById('intro-duel').hidden = !DUELS_CREATE;
@@ -2517,7 +2632,7 @@
   window.addEventListener('pagehide', () => { if (duel.on) duelSend('bye'); });
 
   // Expose a little for debugging in the console.
-  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse, run, daily, duel, get ghost() { return ghost; }, setSkin, get skin() { return skinId; }, lifetimeReps,
+  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse, run, daily, duel, SKINS, buildFrames, forceSkin: (id) => { skinId = id; FR = buildFrames(id); }, get ghost() { return ghost; }, setSkin, get skin() { return skinId; }, lifetimeReps,
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
     _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
       // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.

@@ -149,9 +149,9 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   publishable key in `duel-net.js`; supabase-js lazy-loaded from jsDelivr when a duel
   opens). `?net=local` swaps in a BroadcastChannel between tabs of one browser. Free
   plan: 200 concurrent connections and 100 messages/s for the whole project, roughly
-  7 duels at once at the current rates; Pro ($25/mo) is 500/s. **Soft launch:**
-  `DUELS_PUBLIC = false`, so the intro button only shows with `?duels=1` (or on
-  localhost); duel links always work. Flip it to launch. Next: ranked play (Supabase
+  7 duels at once at the current rates; Pro ($25/mo) is 500/s. **Public** since
+  2026-10-19 (`DUELS_PUBLIC = true`; false hides the intro button again unless `?duels=1`,
+  links always work). Next: ranked play (Supabase
   Auth, queue, Glicko-2 rating, tiers, ghost matches when the queue is empty; ranked
   behind the paywall). No global leaderboard (user decision). Test harness:
   `duel-test.html` (gitignored) shows two game iframes linked locally, with an
@@ -184,10 +184,15 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
     (`pushup-bird-ghost:<mode>:<date>`, y every 50 ms, older days deleted) races you on
     the same course; passing its score shows BEAT TODAY'S BEST. Ghost is daily-only:
     normal runs have random courses, so a ghost there would fly through pipes.
-  - Skins (`SKINS`, built by `buildFrames()` as palette swaps / sprite patches of our own
-    bird): Classic, Headband 100, Shades 250, Gold 500, Fire Bird 1000 lifetime reps
-    (`lifetimeReps()`: push-up + squat scores + plank seconds / 3), Diamond for an active
-    Day Pass / Pro. Saved in `pushup-bird-skin`; the 🐤 SKINS intro button opens the picker.
+  - Skins (`SKINS`, built by `buildFrames()`): palette swaps, row patches, accessory layers per flap
+    frame (`acc.mid/up/down`, `{x, y, rows}` in body coords, may stick out: frames are baked with
+    `SPR_PX`/`SPR_PY` transparent padding, so drawing code uses `frame.width/height`), `facet` (crystal
+    pattern) and live effects in `fx` (`skinFx()`/`drawBird()`: `glow` colour or 'prism', `shine` sweep,
+    `sparkle` star particles, `glint` on the shades' lens, `sweat`, ninja `shadow` afterimages; fire
+    embers in `heatFx()`). Unlocks by lifetime reps (`lifetimeReps()`: push-up + squat scores + plank
+    seconds / 3): Classic, Headband 100 (ribbon tails), Shades 250 (backwards cap), Gold 500, Fire Bird
+    1000 (flame crest), Ninja 2000, Cyborg 5000 (visor, antenna), King 10000 (crown), Diamond for an
+    active Day Pass / Pro. Saved in `pushup-bird-skin`; the 🐤 SKINS intro button opens the picker.
   - Game-over card = stats card (reps, full range, slowdown rep, peak heat, daily best,
     PLAY FREE AT FLAPPYREPS.COM); the recorder keeps 2.6 s of it at the end of each clip.
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the

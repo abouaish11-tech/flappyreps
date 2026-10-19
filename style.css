@@ -599,7 +599,7 @@ body.in-intro #stage .pill { display: none; }
 #skins-list li { background: #fff8d6; border: 3px solid #3d1c12; padding: 10px 8px; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; }
 #skins-list li.locked { opacity: 0.55; cursor: default; }
 #skins-list li.on { border-color: #e0432b; box-shadow: inset 0 0 0 3px #f6c948; }
-#skins-list canvas { width: 88px; height: 64px; image-rendering: pixelated; }
+#skins-list canvas { width: 128px; height: 120px; margin: -14px 0 -20px; image-rendering: pixelated; }
 #skins-list .nm { font-size: 9px; }
 #skins-list .st { font-size: 7px; color: #5a3a24; text-align: center; line-height: 1.4; }
 .skins-bar { height: 6px; width: 100%; background: #3d1c12; }
