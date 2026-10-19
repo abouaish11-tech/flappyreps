@@ -26,9 +26,13 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   weight 0.35 and with the learned sign. In the stock test clip (phone on the floor in
   front) the shoulders look *smaller* at the bottom, so the old fixed "bigger = lower"
   50/50 blend cancelled the height signal and the bird barely moved.
-- Orientation: portrait and landscape both work (manifest `orientation: any`). The canvas
-  follows the camera frame; `onVideoResize()` rescales pipes/bird mid-run and resets the
-  height range (calibration reps are not asked for again).
+- Orientation: the game is always 9:16 portrait (canvas 720x1280) so shared clips are
+  full-screen TikTok videos. The camera frame is cover-cropped into it (`crop`, recomputed
+  every frame in `drawVideo()`; map landmarks to the canvas with `camX`/`camY`, never
+  `x * W`). On wide screens `#stage` is a centred 9:16 column and the pills sit on it.
+  Rotating the phone (manifest `orientation: any`) only changes the crop; `onVideoResize()`
+  resets the height range (calibration reps are not asked for again). Tracking still uses
+  the whole camera frame, so a player outside the crop is still tracked.
 - Script/style tags in `index.html` carry `?v=` so phones pick up new code; bump it on
   every deploy that changes JS/CSS. Once the player has shown `REACH_MIN` of travel, pipe gaps
   are spawned inside the observed bird range (`reach`).

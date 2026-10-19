@@ -197,16 +197,26 @@
   }
   resize(720, 1280);
 
-  // Portrait ⇄ landscape: the camera's frame size flips, so the canvas follows it. Pipes and the
-  // bird are rescaled so a run carries on, and the height range is re-learned on the next rep
-  // (the calibration reps themselves aren't asked for again).
+  // The game is always 9:16 portrait (720x1280), so what you see is a full-screen TikTok-shaped
+  // clip. The camera frame is cover-cropped into it: `crop` is the part of the frame on screen,
+  // in normalized camera coordinates (landmarks map through it with camX/camY).
+  const crop = { x: 0, y: 0, w: 1, h: 1 };
+  function updateCrop() {
+    const src = frameSource || video;
+    const vw = frameSource ? src.width : src.videoWidth, vh = frameSource ? src.height : src.videoHeight;
+    crop.x = 0; crop.y = 0; crop.w = 1; crop.h = 1;
+    if (!vw || !vh) return;
+    if (vw / vh > W / H) { crop.w = (vh * W / H) / vw; crop.x = (1 - crop.w) / 2; }
+    else { crop.h = (vw * H / W) / vh; crop.y = (1 - crop.h) / 2; }
+  }
+  const camX = (x) => ((x - crop.x) / crop.w) * W;
+  const camY = (y) => ((y - crop.y) / crop.h) * H;
+
+  // Portrait ⇄ landscape: the camera's frame flips, the canvas stays 9:16. Only the crop changes,
+  // and the height range is re-learned on the next rep (the calibration reps aren't asked for again).
   function onVideoResize() {
-    const nw = video.videoWidth, nh = video.videoHeight;
-    if (!nw || !nh || (nw === W && nh === H)) return;
-    const sx = nw / W, sy = nh / H;
-    resize(nw, nh);
-    for (const p of pipes) { p.x *= sx; p.w = Math.min(W, H) * PIPE_W_FRAC; p.top *= sy; p.bottom *= sy; }
-    bird.x = W * (tune.birdX ?? BIRD_X_FRAC); bird.y *= sy; bird.trail = [];
+    updateCrop();
+    bird.trail = [];
     cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
   }
 
@@ -235,7 +245,7 @@
       await new Promise((res) => (video.onloadedmetadata = res));
       await video.play();
     }
-    resize(video.videoWidth, video.videoHeight);
+    updateCrop();
     if (!video.__rotWatch) { video.__rotWatch = true; video.addEventListener('resize', onVideoResize); }
 
     if (typeof Pose === 'undefined') {
@@ -1279,7 +1289,10 @@
       ctx.save();
       ctx.translate(W, 0); ctx.scale(-1, 1); // selfie mirror
       if (!tune.raw) ctx.filter = 'saturate(0.8) contrast(1.05)';   // lets the pixel art pop over the room
-      ctx.drawImage(frameSource || video, 0, 0, W, H);
+      updateCrop();                                    // every frame: cheap, and survives a missed resize event
+      const src = frameSource || video;
+      const vw = frameSource ? src.width : src.videoWidth, vh = frameSource ? src.height : src.videoHeight;
+      ctx.drawImage(src, crop.x * vw, crop.y * vh, crop.w * vw, crop.h * vh, 0, 0, W, H);
       ctx.restore();
     } else {
       const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -2021,8 +2034,8 @@
       ctx.save();
       ctx.fillStyle = ok ? 'rgba(126,200,80,0.95)' : 'rgba(246,201,72,0.95)';
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * unit;
-      for (const p of tracking.pts) { ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 11 * unit, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
-      if (tracking.pts.length === 2) { ctx.beginPath(); ctx.moveTo(tracking.pts[0].x * W, tracking.pts[0].y * H); ctx.lineTo(tracking.pts[1].x * W, tracking.pts[1].y * H); ctx.stroke(); }
+      for (const p of tracking.pts) { ctx.beginPath(); ctx.arc(camX(p.x), camY(p.y), 11 * unit, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      if (tracking.pts.length === 2) { ctx.beginPath(); ctx.moveTo(camX(tracking.pts[0].x), camY(tracking.pts[0].y)); ctx.lineTo(camX(tracking.pts[1].x), camY(tracking.pts[1].y)); ctx.stroke(); }
       ctx.restore();
       // Calibration targets: the bird has to reach both bands for a rep to count.
       if (!calib.done && keyboardY === null && !EXACT && !MODES[mode].hold) {
@@ -2514,7 +2527,7 @@
         return { y: tracking.targetY, seen: performance.now() - tracking.lastSeen < 200, source: tracking.source };
       },
       // Offline render from still frames (hidden tabs don't decode video on seek).
-      setFrameSource: (src) => { frameSource = src; if (src && src.width) resize(src.width, src.height); },
+      setFrameSource: (src) => { frameSource = src; if (src && src.width) resize(src.width, src.height); updateCrop(); },
       trackImage: async (img) => {
         tracking.lastSeen = 0;
         await pose.send({ image: img });
