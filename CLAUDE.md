@@ -139,7 +139,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   survivor outlasts the rival's time, longer survival wins. Rival is drawn as a blue
   ghost (`drawRival`), the duel scoreboard sits on the ground strip (`drawDuelHUD`;
   the mode pill and watermark are hidden via `body.in-duel`). Duels are free (no
-  paywall check, no free-run count, not recorded, not on the local leaderboard). ↑/↓
+  paywall check, no free-run count, not on the local leaderboard; only Rep Races are recorded). ↑/↓
   keys work in duels only on localhost. Transport: Supabase Realtime broadcast on public
   channel `duel:<code>` (project "flappy-reps", ref kaqclzjfjywgwjfvlgvu, West EU;
   publishable key in `duel-net.js`; supabase-js lazy-loaded from jsDelivr when a duel
