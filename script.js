@@ -586,8 +586,9 @@
   }
   function finishClip(blob, ext) {
     if (lastClip) URL.revokeObjectURL(lastClip.url);
-    lastClip = { blob, url: URL.createObjectURL(blob), ext, seconds: Math.round((performance.now() - recStart) / 1000), score, mode, daily: daily.on };
-    shareInfo.textContent = `${fmtScore(mode, score)} · ${lastClip.seconds}s clip`;
+    const race = raceOn() && duel.result ? { me: duel.reps, them: duel.oppReps, opp: duelDisplayName(duel.oppName), result: duel.result } : null;
+    lastClip = { blob, url: URL.createObjectURL(blob), ext, seconds: Math.round((performance.now() - recStart) / 1000), score: race ? race.me : score, mode, daily: daily.on, race };
+    shareInfo.textContent = race ? `${race.me}–${race.them} vs ${race.opp} · ${lastClip.seconds}s clip` : `${fmtScore(mode, score)} · ${lastClip.seconds}s clip`;
     shareBar.hidden = false;
   }
   async function shareClip() {
@@ -595,7 +596,10 @@
     if (window.FRAnalytics) FRAnalytics.clipShare(lastClip.mode, lastClip.score);
     const name = `flappy-reps-${lastClip.mode}-${lastClip.score}.${lastClip.ext}`;
     const file = new File([lastClip.blob], name, { type: lastClip.blob.type });
-    const text = lastClip.daily
+    const rc = lastClip.race;
+    const text = rc
+      ? `${rc.result === 'win' ? 'Won' : rc.result === 'lose' ? 'Lost' : 'Drew'} a ${MODES[lastClip.mode].label.toLowerCase()} rep race on Flappy Reps, ${rc.me}–${rc.them} vs ${rc.opp}. Race me: https://flappyreps.com`
+      : lastClip.daily
       ? `I got ${fmtScore(lastClip.mode, lastClip.score)} on today's Flappy Reps daily challenge (${MODES[lastClip.mode].label.toLowerCase()}, ${todayLabel()}). Same course for everyone: https://flappyreps.com/?daily=1`
       : `I scored ${fmtScore(lastClip.mode, lastClip.score)} on Flappy Reps (${MODES[lastClip.mode].label.toLowerCase()}). Beat me: https://flappyreps.com`;
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -714,9 +718,10 @@
     if (amp >= FULL_REP) {
       run.full++; run.streak++; run.bestStreak = Math.max(run.bestStreak, run.streak);
       const label = run.streak >= 3 && (run.streak === 3 || run.streak % 5 === 0) ? `${run.streak}x FULL!` : 'FULL REP';
-      fx.popups.push({ x: bird.x - 40 * unit, y: bird.y + 34 * unit, t: 0, text: label, fill: '#7ec850', size: 10 });
+      if (!raceOn()) fx.popups.push({ x: bird.x - 40 * unit, y: bird.y + 34 * unit, t: 0, text: label, fill: '#7ec850', size: 10 });
       burst(bird.x, bird.y, 6, ['#7ec850', '#ffffff'], H * 0.2, H * 0.4);
     } else run.streak = 0;
+    if (raceOn()) raceRep(amp);
     // Tiredness: recent rep speed vs the best of the player's own first reps.
     if (run.speeds.length >= 5) {
       const early = run.speeds.slice(0, 5).sort((x, y) => y - x).slice(0, 3);
@@ -735,6 +740,24 @@
         sfx.milestone();
       }
     }
+  }
+  // Rep Race scoring: a rep counts only outside a stun and deep enough.
+  function raceRep(amp) {
+    const pill = (text, color) => fx.popups.push({ x: bird.x + 40 * unit, y: bird.y - 30 * unit, t: 0, text, pill: color });
+    if (performance.now() < duel.stunUntil) { pill('STUNNED', '#64748b'); return; }
+    if (amp < RACE_REP_MIN) { pill('GO DEEPER', '#64748b'); return; }
+    duel.reps += 1;
+    if (amp >= FULL_REP) duel.full += 1;
+    fx.scorePop = 1;
+    pill('+1', '#16a34a');
+    sfx.point();
+  }
+  function raceStun(now) {
+    duel.stunUntil = now + RACE_STUN_MS;
+    sfx.hit();
+    fx.shake = 0.7; fx.flash = 0.5;
+    burst(bird.x, bird.y, 16, ['#f87171', '#ffffff', '#94a3b8'], H * 0.4, H * 0.6);
+    fx.popups.push({ x: bird.x + 40 * unit, y: bird.y - 30 * unit, t: 0, text: 'STUNNED 2s', pill: '#dc2626' });
   }
   // Called whenever the score changes. Returns true if it showed a heat banner.
   function heatCheck() {
@@ -903,7 +926,7 @@
   }
   function toCountdown() {
     state = 'countdown'; stateTimer = 0; resetRun(); holdSamples = [];
-    if (duel.on) return; // duels are free and aren't recorded as solo runs
+    if (duel.on) { if (raceOn()) startRecording(); return; } // duels are free and aren't solo runs; races are filmed
     const seed = daily.on ? dailySeed() : (Math.random() * 4294967296) >>> 0;
     runRand = mulberry(seed);
     ghost = daily.on ? loadGhost() : null;
@@ -1064,8 +1087,10 @@
       if (stateTimer >= OVER_MS) toReady();
       return;
     }
+    // Rep Race: the clock runs out for both at the same moment.
+    if (raceOn() && now - duel.goAt >= RACE_MS) { state = 'over'; stateTimer = 0; sfx.go(); duelFinishRun(); return; }
     // Duel: once the rival has crashed, outlasting them wins the round on the spot.
-    if (duel.on && duel.oppMs !== null && now - duel.goAt > duel.oppMs) { duel.outlasted = true; state = 'over'; stateTimer = 0; duelFinishRun(); return; }
+    if (duel.on && !raceOn() && duel.oppMs !== null && now - duel.goAt > duel.oppMs) { duel.outlasted = true; state = 'over'; stateTimer = 0; duelFinishRun(); return; }
 
     // ---- playing ----
     const hold = !!MODES[mode].hold;
@@ -1149,6 +1174,9 @@
           // Plank: passing a pipe is just confirmation you're still level.
           burst(bird.x, bird.y, 6, ['#ffffff', '#cfe3f2'], H * 0.25, H * 0.5);
           sfx.tick();
+        } else if (raceOn()) {
+          // Rep Race: reps are the score; pipes are just in the way.
+          speedMult = Math.min(MAX_SPEED_MULT, speedMult + (speedStepOverride ?? SPEED_STEP));
         } else {
           score += 1;
           speedMult = Math.min(MAX_SPEED_MULT, speedMult + (speedStepOverride ?? SPEED_STEP));
@@ -1157,7 +1185,10 @@
       }
       // circle vs the two pipe rectangles
       const withinX = bird.x + r > p.x && bird.x - r < p.x + p.w;
-      if (withinX && (bird.y - r < p.top || bird.y + r > p.bottom)) { toOver(); return; }
+      if (withinX && (bird.y - r < p.top || bird.y + r > p.bottom)) {
+        if (!raceOn()) { toOver(); return; }
+        if (!p.hit && now >= duel.stunUntil) { p.hit = true; raceStun(now); }   // fly through, stunned
+      }
     }
     pipes = pipes.filter((p) => p.x + p.w > -10);
   }
@@ -1224,7 +1255,8 @@
       const k = p.t / 0.8;
       ctx.save();
       ctx.globalAlpha = 1 - k * k;
-      text(p.text, p.x, p.y - k * 70 * unit, (p.size || 16) * unit, { fill: p.fill || '#fbe58a' });
+      if (p.pill) pillText(p.text, p.x, p.y - k * 70 * unit, 16 * unit, p.pill, '#ffffff');
+      else text(p.text, p.x, p.y - k * 70 * unit, (p.size || 16) * unit, { fill: p.fill || '#fbe58a' });
       ctx.restore();
     }
     if (fx.banner) {
@@ -1498,7 +1530,8 @@
     const dead = duel.oppMs !== null;
     const frame = dead ? RV.rivalHit : Math.floor(bird.flapT * 8) % 2 ? RV.rivalUp : RV.rival;
     blitBird(frame, bird.x, duel.showY, dead ? 0.6 : 0, 1, 1, dead ? 0.35 : 0.55);
-    text(duel.oppName, bird.x, duel.showY - 38 * unit, 8 * unit, { fill: '#4fc3f7' });
+    if (raceOn()) pillText(duelDisplayName(duel.oppName), bird.x, duel.showY - 40 * unit, 13 * unit, 'rgba(14,16,28,0.75)', '#93c5fd');
+    else text(duel.oppName, bird.x, duel.showY - 38 * unit, 8 * unit, { fill: '#4fc3f7' });
   }
 
   function pickFrame() {
@@ -1538,7 +1571,9 @@
     if (st >= 1) glow = { color: ['', '#ff9a2a', '#ff6a1f', '#ff2a12'][st], blur: (12 + 8 * st) * unit };
     // Overheating: the bird sags nose-down and rattles.
     const jx = st >= 3 ? (Math.random() - 0.5) * 4 * unit : 0, jy = st >= 3 ? (Math.random() - 0.5) * 3 * unit : 0;
-    blitBird(frame, bird.x + jx, bird.y + jy, bird.rot + (st >= 3 ? 0.14 : 0), sx, sy, 1, glow);
+    const stunned = raceOn() && state === 'playing' && performance.now() < duel.stunUntil;
+    const alpha = stunned && Math.floor(performance.now() / 110) % 2 ? 0.3 : 1;
+    blitBird(frame, bird.x + jx, bird.y + jy, bird.rot + (st >= 3 ? 0.14 : 0), sx, sy, alpha, glow);
     // Sweat drop while straining at the bottom of a rep.
     if (frame === FR.strain) {
       const px = 3.4 * unit, d = (bird.flapT * 2.2) % 1;
@@ -1577,6 +1612,7 @@
 
   function drawHUD() {
     const big = 56 * unit, mid = 22 * unit, small = 13 * unit;
+    if (raceOn()) { drawRaceHUD(); return; }
     if (duel.on) { drawDuelHUD(big, mid, small); return; }
     if (state === 'playing') {
       const pop = 1 + 0.45 * fx.scorePop * fx.scorePop;
@@ -1658,6 +1694,174 @@
     ctx.restore();
     const blink = Math.floor(performance.now() / 350) % 2;
     text(st >= 2 ? 'HOT!' : 'TEMP', x, by + br + 14 * unit, 8 * unit, { fill: st >= 2 && blink ? '#ff4a2a' : '#fff' });
+  }
+
+  // ---------- Rep Race HUD (clean, not pixel: system font, rounded glass cards) ----------
+  const SANS = (weight, px) => `${weight} ${px}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Inter, Roboto, system-ui, sans-serif`;
+  const duelDisplayName = (n) => (n ? n.charAt(0) + n.slice(1).toLowerCase() : '');
+  function rrect(x, y, w, h, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function ctext(str, x, y, weight, px, fill, align = 'center', spacing = 0) {
+    ctx.font = SANS(weight, px); ctx.textAlign = align; ctx.textBaseline = 'middle';
+    const ls = 'letterSpacing' in ctx; if (ls) ctx.letterSpacing = `${spacing}px`;
+    ctx.fillStyle = fill; ctx.fillText(str, x, y);
+    if (ls) ctx.letterSpacing = '0px';
+  }
+  function pillText(str, x, y, px, bg, fg) {
+    ctx.save();
+    ctx.font = SANS(800, px);
+    const w = ctx.measureText(str).width + px * 1.4, h = px * 1.9;
+    rrect(x - w / 2, y - h / 2, w, h, h / 2); ctx.fillStyle = bg; ctx.fill();
+    ctext(str, x, y + px * 0.05, 800, px, fg);
+    ctx.restore();
+  }
+  function glass(x, y, w, h, r) {
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 30 * unit; ctx.shadowOffsetY = 10 * unit;
+    rrect(x, y, w, h, r); ctx.fillStyle = 'rgba(14,16,28,0.86)'; ctx.fill();
+    ctx.restore();
+    rrect(x + 0.5, y + 0.5, w - 1, h - 1, r); ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  function raceAvatar(x, y, r, c1, c2, frame, flip) {
+    const ring = ctx.createLinearGradient(x - r, y - r, x + r, y + r); ring.addColorStop(0, c1); ring.addColorStop(1, c2);
+    ctx.beginPath(); ctx.arc(x, y, r * 1.09, 0, Math.PI * 2); ctx.fillStyle = ring; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = '#1c2033'; ctx.fill();
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.clip();
+    ctx.imageSmoothingEnabled = false;
+    const px = r / 14;
+    ctx.translate(x + (flip ? -2 : 2) * px, y + 2 * px); if (flip) ctx.scale(-1, 1);
+    ctx.drawImage(frame, -11 * px, -8 * px, 22 * px, 16 * px);
+    ctx.restore();
+  }
+  function rankPill(x, y, k, reps, align) {
+    const [name, , col] = rankFor(reps);
+    ctx.font = SANS(700, 13 * k);
+    const w = ctx.measureText(name).width + 30 * k, h = 26 * k, x0 = align === 'left' ? x : x - w;
+    rrect(x0, y - h / 2, w, h, h / 2); ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x0 + 13 * k, y, 5 * k, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    ctext(name, x0 + 23 * k, y + k, 700, 13 * k, '#e6e8f0', 'left', k);
+  }
+  // The versus card: avatars + ranks, clock, head-to-head, live reps with a tug-of-war bar.
+  function raceCard() {
+    const cw = Math.min(W - 32 * unit, 680 * unit), k = cw / 680, ch = 272 * k;
+    const x0 = (W - cw) / 2, y0 = Math.max(16 * unit, H * 0.035, pillsBottom() + 8 * unit);
+    const X = (v) => x0 + v * k, Y = (v) => y0 + v * k;
+    glass(x0, y0, cw, ch, 28 * k);
+    ctext(`REP RACE  ·  ${MODES[mode].label}`, X(340), Y(30), 700, 13 * k, 'rgba(255,255,255,0.55)', 'center', 2.5 * k);
+    raceAvatar(X(84), Y(100), 44 * k, '#4ade80', '#16a34a', FR.mid, false);
+    raceAvatar(X(596), Y(100), 44 * k, '#f87171', '#dc2626', duel.oppFace || RV.rival, true);
+    ctext('You', X(146), Y(82), 800, 24 * k, '#ffffff', 'left');
+    rankPill(X(146), Y(116), k, duel.myLife ?? lifetimeReps(), 'left');
+    ctext(duelDisplayName(duel.oppName), X(534), Y(82), 800, 24 * k, '#ffffff', 'right');
+    rankPill(X(534), Y(116), k, duel.oppLife, 'right');
+    // clock
+    const left = state === 'playing' ? Math.max(0, RACE_MS - (performance.now() - duel.goAt)) : state === 'over' ? 0 : RACE_MS;
+    const secs = Math.ceil(left / 1000), urgent = state === 'playing' && secs <= 10;
+    ctx.save();
+    ctx.translate(X(340), Y(80));
+    if (urgent) { const pz = 1 + 0.08 * Math.max(0, Math.sin(performance.now() / 160)); ctx.scale(pz, pz); }
+    ctext(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, 0, 0, 800, 50 * k, urgent ? '#f87171' : '#ffffff');
+    ctx.restore();
+    const rec = h2hGet(duel.oppPid);
+    rrect(X(292), Y(116), 96 * k, 26 * k, 13 * k); ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fill();
+    ctext(`${rec.w} – ${rec.l}`, X(340), Y(130), 700, 14 * k, '#e6e8f0');
+    ctext('HEAD TO HEAD', X(340), Y(158), 600, 10 * k, 'rgba(255,255,255,0.4)', 'center', 1.5 * k);
+    // reps + tug of war
+    const a = duel.reps, b = duel.oppReps;
+    const target = (a + 1) / (a + b + 2);
+    duel.barF = duel.barF === undefined ? target : duel.barF + (target - duel.barF) * 0.15;
+    const by = Y(218), bx0 = X(120), bx1 = X(560), split = bx0 + (bx1 - bx0) * duel.barF;
+    const pop = 1 + 0.35 * fx.scorePop * fx.scorePop;
+    ctx.save(); ctx.translate(X(56), by); ctx.scale(pop, pop); ctext(String(a), 0, 0, 800, 44 * k, '#4ade80'); ctx.restore();
+    ctext(String(b), X(624), by, 800, 44 * k, '#f87171');
+    ctext('REPS', X(56), by + 30 * k, 700, 10 * k, 'rgba(255,255,255,0.4)', 'center', 1.5 * k);
+    ctext('REPS', X(624), by + 30 * k, 700, 10 * k, 'rgba(255,255,255,0.4)', 'center', 1.5 * k);
+    ctx.save();
+    rrect(bx0, by - 7 * k, bx1 - bx0, 14 * k, 7 * k); ctx.clip();
+    const lg = ctx.createLinearGradient(bx0, 0, split, 0); lg.addColorStop(0, '#16a34a'); lg.addColorStop(1, '#4ade80');
+    ctx.fillStyle = lg; ctx.fillRect(bx0, by - 7 * k, split - bx0, 14 * k);
+    const rg = ctx.createLinearGradient(split, 0, bx1, 0); rg.addColorStop(0, '#f87171'); rg.addColorStop(1, '#dc2626');
+    ctx.fillStyle = rg; ctx.fillRect(split, by - 7 * k, bx1 - split, 14 * k);
+    ctx.restore();
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 8 * k;
+    ctx.beginPath(); ctx.arc(split, by, 11 * k, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.restore();
+    return { bottom: y0 + ch, k, cw };
+  }
+  // Bottom of the HTML pills (✕, status, 🏆, 🔊) in canvas pixels, so the card sits below them.
+  function pillsBottom() {
+    const c = canvas.getBoundingClientRect();
+    if (!c.height) return 0;
+    let bottom = c.top;
+    for (const id of ['quit', 'status', 'board', 'mute']) {
+      const r = document.getElementById(id).getBoundingClientRect();
+      if (r.height) bottom = Math.max(bottom, r.bottom);
+    }
+    return Math.max(0, (bottom - c.top) * (H / c.height));
+  }
+  // A centred glass panel with lines of text: [str, weight, px, colour].
+  function racePanel(cy, lines, k) {
+    const w = Math.min(W - 32 * unit, 520 * unit), gap = 12 * k;
+    const h = lines.reduce((t, l) => t + l[2] * 1.25, 0) + gap * (lines.length - 1) + 48 * k;
+    glass(W / 2 - w / 2, cy - h / 2, w, h, 24 * k);
+    let y = cy - h / 2 + 24 * k;
+    for (const [str, weight, px, col] of lines) { y += px * 0.625; ctext(str, W / 2, y, weight, px, col); y += px * 0.625 + gap; }
+  }
+  function drawRaceHUD() {
+    const opp = duelDisplayName(duel.oppName);
+    if (!duel.peer && state === 'ready') {
+      const posed = tracking.hasPose || keyboardY !== null;
+      if (!posed) drawPoseGuide();
+      racePanel(H * 0.16, [['Waiting for your friend…', 800, 26 * unit, '#ffffff'], ['Send them the race link', 600, 16 * unit, 'rgba(255,255,255,0.6)']], unit);
+      return;
+    }
+    const card = raceCard(), k = card.k, below = card.bottom + 24 * unit;
+    if (duel.gone) {
+      racePanel(H * 0.5, [[`${opp} left the race`, 800, 28 * k, '#ffffff'], ['Head back to the menu to start a new one', 600, 15 * k, 'rgba(255,255,255,0.6)']], k);
+      return;
+    }
+    if (state === 'ready') {
+      const posed = tracking.hasPose || keyboardY !== null;
+      if (!posed) drawPoseGuide();
+      const needRep = posed && keyboardY === null && !EXACT && !calibrated();
+      const mine = posed ? (needRep ? calibText().join(' · ') : 'You’re set ✓') : MODES[mode].ready;
+      const lines = [
+        [`Most reps in ${RACE_MS / 1000} seconds wins`, 800, 24 * k, '#ffffff'],
+        ['Hit a pipe = 2s stun  ·  only deep reps count', 600, 14 * k, 'rgba(255,255,255,0.6)'],
+        [mine, 700, 16 * k, posed && !needRep ? '#4ade80' : '#facc15'],
+        [duel.oppReady ? `${opp} is set ✓` : `Waiting for ${opp}…`, 700, 16 * k, '#93c5fd'],
+      ];
+      const lh = lines.reduce((t, l) => t + l[2] * 1.25, 0) + 12 * k * 3 + 48 * k;
+      racePanel(below + lh / 2, lines, k);
+      return;
+    }
+    if (state === 'countdown') {
+      const n = 3 - Math.floor(stateTimer / 1000), t = (stateTimer % 1000) / 1000;
+      const punch = 1 + 0.6 * Math.pow(1 - t, 3);
+      ctx.save();
+      ctx.translate(W / 2, H * 0.5); ctx.scale(punch, punch);
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 24 * unit;
+      ctext(n > 0 ? String(n) : 'GO!', 0, 0, 900, 130 * unit, '#ffffff');
+      ctx.restore();
+      return;
+    }
+    if (state === 'over') {
+      if (!duel.result) {
+        racePanel(H * 0.5, [['Time!', 900, 44 * k, '#ffffff'], [`Waiting for ${opp}’s reps…`, 600, 16 * k, 'rgba(255,255,255,0.6)']], k);
+        return;
+      }
+      const head = duel.result === 'win' ? 'VICTORY' : duel.result === 'lose' ? 'DEFEAT' : 'DRAW';
+      const col = duel.result === 'win' ? '#4ade80' : duel.result === 'lose' ? '#f87171' : '#facc15';
+      const rec = h2hGet(duel.oppPid);
+      const lines = [[head, 900, 52 * k, col], [`${duel.reps} – ${duel.oppReps}`, 800, 40 * k, '#ffffff']];
+      if (duel.reps === duel.oppReps && duel.result !== 'draw') lines.push([`Full-range reps ${duel.full} – ${duel.oppFull}`, 600, 15 * k, 'rgba(255,255,255,0.7)']);
+      lines.push([`Head to head vs ${opp}: ${rec.w} – ${rec.l}`, 600, 15 * k, 'rgba(255,255,255,0.6)']);
+      racePanel(H * 0.5, lines, k);
+    }
   }
 
   function drawDuelHUD(big, mid, small) {
@@ -1862,7 +2066,7 @@
     if (!attract && !tune.raw) drawHUD();
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
-    if (!tune.raw && !attract && !duel.on) drawWatermark(); // the duel scoreboard owns the ground strip
+    if (!tune.raw && !attract && (!duel.on || raceOn())) drawWatermark(); // the survival scoreboard owns the ground strip
     recFrame();
   }
 
@@ -1875,13 +2079,38 @@
     requestAnimationFrame(frame);
   }
 
-  // ---------- Duels (1 v 1 over a link, first to 3) ----------
-  // Both players get the same seeded course. Only bird height, score and round events cross the
-  // wire (DuelNet), never video. A round ends when both have crashed, or as soon as the survivor
-  // outlasts the one who crashed; longer survival wins it. First to DUEL_WIN rounds takes the duel.
-  // The creator of the link is the host: it picks the exercise and starts each round once both
-  // players are set, sending the seed. Everything else is symmetric.
+  // ---------- Duels (1 v 1 over a link: 60 s Rep Race, or survival first to 3) ----------
+  // Both players get the same seeded course. Only bird height, reps/score and round events cross
+  // the wire (DuelNet), never video. The creator of the link is the host: it picks the exercise and
+  // the format, and starts each round once both players are set, sending the seed.
+  // Rep Race (`duel.fmt` 'race', the default; plank always uses survival): RACE_MS on the clock,
+  // most counted reps wins (ties: more full-range reps). Only reps of at least RACE_REP_MIN of the
+  // play range count, and hitting a pipe stuns you for RACE_STUN_MS (you fly through, reps don't
+  // count). One race per match, then REMATCH. Races are recorded so the clip carries the scoreboard.
+  // Survival ('survive'): a round ends when both have crashed, or as soon as the survivor outlasts
+  // the one who crashed; longer survival wins it. First to DUEL_WIN rounds takes the duel.
   const DUEL_WIN = 3;
+  const RACE_MS = (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && Number(new URLSearchParams(location.search).get('racesecs')) || 60) * 1000;
+  const RACE_STUN_MS = 2000;
+  const RACE_REP_MIN = 0.3;
+  const DUEL_FMT_KEY = 'pushup-bird-duel-fmt';   // the host's last pick
+  // Rank badge from lifetime reps (no accounts yet), and a head-to-head record per opponent,
+  // keyed by a random per-browser player id that travels in `hello`.
+  const RANKS = [['BRONZE', 0, '#d08a4e'], ['SILVER', 100, '#cbd5e1'], ['GOLD', 500, '#facc15'],
+    ['PLATINUM', 1500, '#5eead4'], ['DIAMOND', 4000, '#7dd3fc'], ['CHAMPION', 10000, '#f472b6']];
+  const rankFor = (reps) => RANKS.filter((r) => reps >= r[1]).pop();
+  const PID_KEY = 'pushup-bird-pid', H2H_KEY = 'pushup-bird-h2h';
+  const myPid = localStorage.getItem(PID_KEY) || (() => { const id = Math.random().toString(36).slice(2, 12); localStorage.setItem(PID_KEY, id); return id; })();
+  function h2hAll() { try { return JSON.parse(localStorage.getItem(H2H_KEY) || '{}') || {}; } catch { return {}; } }
+  const h2hGet = (pid) => (pid && h2hAll()[pid]) || { w: 0, l: 0 };
+  function h2hAdd(result) {
+    if (!duel.oppPid || result === 'draw') return;
+    const all = h2hAll(), r = all[duel.oppPid] || { w: 0, l: 0 };
+    r[result === 'win' ? 'w' : 'l'] += 1; r.name = duel.oppName;
+    all[duel.oppPid] = r;
+    localStorage.setItem(H2H_KEY, JSON.stringify(all));
+  }
+  const raceOn = () => duel.on && duel.fmt === 'race' && !MODES[mode].hold;
   const DUEL_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   const DUEL_POS_MS = 166;         // send our bird height 6x a second while playing (the rival is smoothed);
                                    // Supabase free plan caps the whole project at 100 messages/s
@@ -1900,6 +2129,8 @@
     iReady: false, oppReady: false,
     oppY: null, oppA: 0, oppScore: 0, oppMs: null, myMs: null, showY: null,
     result: null, nextAt: 0, matchOver: false, gone: false,
+    fmt: 'race', reps: 0, full: 0, oppReps: 0, oppFull: 0, stunUntil: 0,
+    oppPid: null, oppSkin: null, oppFace: null, oppLife: 0,
   };
 
   function duelRand(i) {
@@ -1913,20 +2144,24 @@
   const duelUrl = (code) => `${location.origin}${location.pathname}?duel=${code}`;
   const duelHello = () => duelSend('hello', {
     name: playerName, mode, host: duel.host, ready: duel.iReady, round: duel.round,
+    fmt: duel.host ? duel.fmt : undefined, pid: myPid, skin: skinId, life: (duel.myLife = lifetimeReps()),
     seed: duel.host && duel.round ? duel.seed : undefined,   // lets a rival who missed `start` catch up
     ms: duel.myMs ?? undefined, s: duel.myMs !== null ? score : undefined, // repeats a possibly-lost `dead`
+    r: duel.myMs !== null ? duel.reps : undefined, f: duel.myMs !== null ? duel.full : undefined,
   });
 
   function duelOpen(code, host) {
     duelClose(true);
     Object.assign(duel, { on: true, code, host, peer: null, oppName: 'RIVAL', lastHeard: 0, lastHello: 0, round: 0, me: 0, them: 0,
-      iReady: false, oppReady: false, result: null, nextAt: 0, matchOver: false, gone: false, oppY: null, oppMs: null, myMs: null });
+      iReady: false, oppReady: false, result: null, nextAt: 0, matchOver: false, gone: false, oppY: null, oppMs: null, myMs: null,
+      fmt: host ? (localStorage.getItem(DUEL_FMT_KEY) || 'race') : 'race', reps: 0, full: 0, oppReps: 0, oppFull: 0, stunUntil: 0,
+      oppPid: null, oppSkin: null, oppFace: null, oppLife: 0 });
     if (host) sessionStorage.setItem(DUEL_HOST_KEY, code);
     history.replaceState(null, '', `?duel=${code}`);
     document.body.classList.add('in-duel');
     duel.link = DuelNet.connect(code, duelOnMessage);
     document.getElementById('duel-name').value = playerName === 'YOU' ? '' : playerName;
-    document.getElementById('duel-mode').textContent = MODES[mode].label;
+    duelFmtUi();
     document.getElementById('duel-link').value = duelUrl(code);
     document.getElementById('duel-linkrow').hidden = !host;
     document.getElementById('duel-join').hidden = host;
@@ -1934,6 +2169,15 @@
     duelEl.hidden = false;
     duelHello();
     duel.hb = setInterval(duelHeartbeat, DUEL_HELLO_MS);
+  }
+  // Lobby: the host picks Rep Race or Survival; the guest sees what they were challenged to.
+  const duelFmtText = () => (duel.fmt === 'race' && !MODES[mode].hold ? `rep race · ${RACE_MS / 1000}s · most reps wins` : `survival · first to ${DUEL_WIN} rounds`);
+  function duelFmtUi() {
+    document.getElementById('duel-mode').textContent = MODES[mode].label;
+    document.getElementById('duel-fmt-text').textContent = duelFmtText();
+    const box = document.getElementById('duel-fmt');
+    box.hidden = !duel.host || !!MODES[mode].hold;   // planks are always survival
+    box.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.fmt === duel.fmt));
   }
   function duelLobbyStatus(msg, ok) {
     const s = document.getElementById('duel-status');
@@ -1952,29 +2196,33 @@
       // Two tabs can both believe they created the room (shared session storage); one steps down.
       if (m.host && duel.host && m.from < duel.id) duel.host = false;
       if (m.host && !duel.host && MODES[m.mode] && m.mode !== mode) setMode(m.mode, true);
+      if (m.host && !duel.host) { const f = m.fmt === 'race' ? 'race' : 'survive'; if (f !== duel.fmt) { duel.fmt = f; duelFmtUi(); } } // older hosts send no fmt
+      if (typeof m.pid === 'string') duel.oppPid = m.pid.slice(0, 16);
+      duel.oppLife = Math.max(0, m.life | 0);
+      if (m.skin !== duel.oppSkin && SKINS.some((k) => k.id === m.skin)) { duel.oppSkin = m.skin; duel.oppFace = buildFrames(m.skin).mid; }
       if (m.round === duel.round) duel.oppReady = !!m.ready;
       // Heartbeat recovery: a round we never got `start` for, or a result whose `dead` was lost.
       // (only the very next round: a hello sent just before a rematch reset must not restart an old one)
       if (m.host && !duel.host && m.round === duel.round + 1 && m.seed !== undefined && !duel.gone) duelBeginRound(m.round, m.seed);
-      else if (m.round === duel.round && m.ms !== undefined && duel.oppMs === null) { duel.oppMs = m.ms; duel.oppScore = m.s || 0; duelResolve(); }
+      else if (m.round === duel.round && m.ms !== undefined && duel.oppMs === null) { duel.oppMs = m.ms; duel.oppScore = m.s || 0; duel.oppReps = m.r | 0; duel.oppFull = m.f | 0; duelResolve(); }
       if (first) {
         duelHello(); // answer right away so both sides see each other
-        document.getElementById('duel-mode').textContent = MODES[mode].label;
+        duelFmtUi();
         if (window.FRAnalytics) FRAnalytics.duel(duel.host ? 'create' : 'join', mode);
         if (duel.host) { duelLobbyStatus(`${duel.oppName} joined!`, true); duelEnterGame(); }
-        else duelLobbyStatus(`${duel.oppName === 'RIVAL' ? 'A friend' : duel.oppName} challenged you —${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}.`, true);
+        else duelLobbyStatus(`${duel.oppName === 'RIVAL' ? 'A friend' : duel.oppName} challenged you: ${MODES[mode].label.toLowerCase()}, ${duelFmtText()}.`, true);
       }
     } else if (m.t === 'ready') {
       if (m.round === duel.round) duel.oppReady = !!m.ready;
     } else if (m.t === 'start') {
-      if (!duel.host && m.round > duel.round) duelBeginRound(m.round, m.seed);
+      if (!duel.host && m.round > duel.round) { if (m.fmt === 'race' || m.fmt === 'survive') duel.fmt = m.fmt; duelBeginRound(m.round, m.seed); }
     } else if (m.t === 'pos') {
       if (m.round !== duel.round) return;
       duel.oppY = m.y; duel.oppA = m.a || 0;
-      if (duel.oppMs === null) duel.oppScore = m.s;
+      if (duel.oppMs === null) { duel.oppScore = m.s; if (m.r !== undefined) duel.oppReps = m.r | 0; }
     } else if (m.t === 'dead') {
       if (m.round !== duel.round || duel.oppMs !== null) return;
-      duel.oppMs = m.ms; duel.oppScore = m.s;
+      duel.oppMs = m.ms; duel.oppScore = m.s; duel.oppReps = m.r | 0; duel.oppFull = m.f | 0;
       duelResolve();
     } else if (m.t === 'rematch') {
       if (duel.matchOver) duelRematch(false);
@@ -2002,19 +2250,19 @@
     if (duel.gone) return;
     if (state === 'playing' && now - duel.lastPos > DUEL_POS_MS) {
       duel.lastPos = now;
-      duelSend('pos', { round: duel.round, y: bird.y / H, a: MODES[mode].hold ? holdY / H : 0, s: score });
+      duelSend('pos', { round: duel.round, y: bird.y / H, a: MODES[mode].hold ? holdY / H : 0, s: score, r: duel.reps });
     }
     // Host starts the next round once both players are set.
     if (duel.host && state === 'ready' && !attract && duel.peer && !duel.matchOver && duel.iReady && duel.oppReady) {
       const seed = (Math.random() * 4294967296) >>> 0;
-      duelSend('start', { round: duel.round + 1, seed });
+      duelSend('start', { round: duel.round + 1, seed, fmt: duel.fmt });
       duelBeginRound(duel.round + 1, seed);
     }
   }
 
   function duelBeginRound(round, seed) {
     Object.assign(duel, { round, seed, pipeIdx: 0, iReady: false, oppReady: false, oppY: null, showY: null, outlasted: false,
-      oppScore: 0, oppMs: null, myMs: null, result: null, nextAt: 0 });
+      oppScore: 0, oppMs: null, myMs: null, result: null, nextAt: 0, reps: 0, full: 0, oppReps: 0, oppFull: 0, stunUntil: 0 });
     toCountdown();
   }
 
@@ -2022,7 +2270,7 @@
   function duelFinishRun() {
     if (duel.myMs !== null) return;
     duel.myMs = Math.round(performance.now() - duel.goAt);
-    duelSend('dead', { round: duel.round, ms: duel.myMs, s: score });
+    duelSend('dead', { round: duel.round, ms: duel.myMs, s: score, r: duel.reps, f: duel.full });
     duelResolve();
   }
 
@@ -2032,12 +2280,26 @@
       // the moment we pass their time.
       return;
     }
+    if (raceOn()) {
+      // Rep Race: one race decides it; most reps, then most full-range reps.
+      const a = duel.reps, b = duel.oppReps;
+      duel.result = a !== b ? (a > b ? 'win' : 'lose') : duel.full !== duel.oppFull ? (duel.full > duel.oppFull ? 'win' : 'lose') : 'draw';
+      if (duel.result === 'win') { duel.me += 1; sfx.milestone(); burst(W / 2, H * 0.45, 50, ['#4ade80', '#facc15', '#ffffff'], H * 0.6, H * 0.8); }
+      if (duel.result === 'lose') duel.them += 1;
+      duel.matchOver = true;
+      duelBar.hidden = false;
+      h2hAdd(duel.result);
+      setTimeout(() => stopRecording(false), 2600);   // keep the result card in the clip
+      if (window.FRAnalytics) FRAnalytics.duel('end', mode);
+      return;
+    }
     duel.result = duel.myMs > duel.oppMs ? 'win' : duel.myMs < duel.oppMs ? 'lose' : 'draw';
     if (duel.result === 'win') { duel.me += 1; sfx.milestone(); burst(W / 2, H * 0.3, 40, ['#7ec850', '#f7d21c', '#ffffff'], H * 0.6, H * 0.8); }
     if (duel.result === 'lose') duel.them += 1;
     if (duel.me >= DUEL_WIN || duel.them >= DUEL_WIN) {
       duel.matchOver = true;
       duelBar.hidden = false;
+      h2hAdd(duel.me > duel.them ? 'win' : 'lose');
       if (window.FRAnalytics) FRAnalytics.duel('end', mode);
     } else {
       duel.nextAt = performance.now() + DUEL_NEXT_MS;
@@ -2056,6 +2318,7 @@
     if (duel.gone) return;
     duel.gone = true;
     duel.nextAt = 0;
+    if (raceOn()) stopRecording(true);
     if (state === 'playing' || state === 'countdown') { resetRun(); state = 'over'; stateTimer = 0; }
     duelLobbyStatus(`${duel.oppName} left the duel.`);
     document.getElementById('duel-rematch').hidden = true;
@@ -2208,12 +2471,19 @@
   document.getElementById('intro-duel').hidden = !DUELS_CREATE;
   document.getElementById('intro-duel').addEventListener('click', () => { ensureAudio(); duelOpen(newDuelCode(), true); });
   document.getElementById('duel-join').addEventListener('click', () => { ensureAudio(); duelEnterGame(); });
+  document.querySelectorAll('#duel-fmt button').forEach((b) => b.addEventListener('click', () => {
+    if (!duel.host || duel.round) return;
+    duel.fmt = b.dataset.fmt;
+    localStorage.setItem(DUEL_FMT_KEY, duel.fmt);
+    duelFmtUi();
+    duelHello();
+  }));
   document.getElementById('duel-close').addEventListener('click', () => duelClose(false));
   document.getElementById('duel-copy').addEventListener('click', async () => {
     const url = duelUrl(duel.code);
     const btn = document.getElementById('duel-copy');
     if (navigator.share && matchMedia('(pointer: coarse)').matches) {
-      try { await navigator.share({ title: 'Flappy Reps duel', text: `Duel me on Flappy Reps, ${MODES[mode].label.toLowerCase()}, first to ${DUEL_WIN}:`, url }); return; }
+      try { await navigator.share({ title: 'Flappy Reps duel', text: `Duel me on Flappy Reps, ${MODES[mode].label.toLowerCase()}, ${duelFmtText()}:`, url }); return; }
       catch (err) { if (err && err.name === 'AbortError') return; }
     }
     try { await navigator.clipboard.writeText(url); btn.textContent = 'COPIED'; }
@@ -2234,7 +2504,7 @@
   window.addEventListener('pagehide', () => { if (duel.on) duelSend('bye'); });
 
   // Expose a little for debugging in the console.
-  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse, run, daily, get ghost() { return ghost; }, setSkin, get skin() { return skinId; }, lifetimeReps,
+  window.__pushupBird = { get state() { return state; }, get score() { return score; }, get mode() { return mode; }, setMode, get runs() { return runs; }, get pose() { return pose; }, get pipes() { return pipes; }, tracking, bird, fx, onPoint, onHit, get lastClip() { return lastClip; }, get recMime() { return recMime; }, calib, sizeUse, run, daily, duel, get ghost() { return ghost; }, setSkin, get skin() { return skinId; }, lifetimeReps,
     // Debug helpers: step the simulation and draw a frame without the rAF loop (used for headless checks).
     _debug: { render, step: (dt) => { update(dt); render(); }, setState: (s) => { state = s; stateTimer = 0; },
       // Offline rendering: seek the source video to t seconds, run the tracker on that frame, resolve when landmarks arrive.

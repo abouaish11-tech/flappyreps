@@ -110,7 +110,21 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   confirmation page or look it up anytime at `portalUrl`
   (https://polar.sh/flappy-reps/portal) and paste it into the key field; the
   `?license_key=` URL param is still handled in case that ever changes.
-- Duels (1 v 1 over a link, first to `DUEL_WIN` = 3), in the "Duels" section of
+- Rep Race (default duel format, `duel.fmt === 'race'`, `raceOn()`; plank always uses survival): `RACE_MS` (60 s;
+  `?racesecs=N` on localhost for tests) on the clock, most counted reps wins, ties go to full-range reps. A rep
+  counts only if ≥ `RACE_REP_MIN` (0.3) of the play range and not during a stun (`raceRep()`); hitting a pipe
+  stuns you for `RACE_STUN_MS` (2 s, `raceStun()`, the bird blinks and flies through). One race per match,
+  then REMATCH. The host picks the format in the lobby (`#duel-fmt`, saved in `pushup-bird-duel-fmt`) and sends
+  it in `hello`/`start` (guests of hosts without `fmt` fall back to survival). `pos`/`dead`/`hello` carry `r`
+  (reps) and `f` (full reps); `hello` also carries `pid` (random per-browser id, `pushup-bird-pid`), `skin` and
+  `life` (lifetime reps). HUD is deliberately *not* pixel art: `drawRaceHUD()`/`raceCard()` draw a clean glass
+  versus card (system font via `SANS`, `rrect`, `glass`, `pillText`) with avatars of each player's skin,
+  rank pills (`RANKS` by lifetime reps: Bronze 0, Silver 100, Gold 500, Platinum 1500, Diamond 4000,
+  Champion 10000), the clock (red + pulsing in the last 10 s), head-to-head record (`pushup-bird-h2h`,
+  `{pid: {w, l, name}}`, also updated by survival match results), live reps and a tug-of-war bar; the card sits
+  below the HTML pills (`pillsBottom()`). Races are recorded (clip shows the card and the VICTORY/DEFEAT
+  card; share text names the score and rival). Test: two headless pages with `?net=local&exact=1&racesecs=12`.
+- Duels (1 v 1 over a link: Rep Race above, or survival first to `DUEL_WIN` = 3), in the "Duels" section of
   `script.js` plus `duel-net.js` (global `DuelNet`, the transport). "⚔ DUEL A FRIEND" on the
   intro creates a 5-char room code and a `?duel=CODE` link; the creator is the host
   (sessionStorage `pushup-bird-duel-host`) and picks the exercise; opening the link shows
@@ -120,7 +134,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   score and round events are sent, never video. Messages: `hello` (presence, name,
   mode, ready flag, and the round/seed/result so a dropped `start` or `dead` heals; sent
   by a 1 s timer so it keeps going in a background tab), `ready`, `start`, `pos`
-  (6/s, the rival is smoothed), `dead` (survival ms), `rematch`, `bye`. The host
+  (6/s, the rival is smoothed), `dead` (survival ms, or race end), `rematch`, `bye`. The host
   starts a round once both are set; a round ends when both crash or as soon as the
   survivor outlasts the rival's time, longer survival wins. Rival is drawn as a blue
   ghost (`drawRival`), the duel scoreboard sits on the ground strip (`drawDuelHUD`;

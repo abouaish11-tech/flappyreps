@@ -67,7 +67,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=20261019a" />
+  <link rel="stylesheet" href="style.css?v=20261019b" />
 </head>
 <body class="in-intro">
   <div id="stage">
@@ -131,7 +131,11 @@
         <h2>⚔ DUEL</h2>
         <button id="duel-close" type="button" aria-label="close">✕</button>
       </div>
-      <p class="duel-sub">1 v 1 · first to 3 rounds · <b id="duel-mode">PUSH-UPS</b></p>
+      <p class="duel-sub">1 v 1 · <span id="duel-fmt-text">rep race · 60s · most reps wins</span> · <b id="duel-mode">PUSH-UPS</b></p>
+      <div id="duel-fmt" class="duel-fmt">
+        <button type="button" data-fmt="race" class="active">⏱ REP RACE<small>60s · most reps wins</small></button>
+        <button type="button" data-fmt="survive">⚔ SURVIVAL<small>first to 3 rounds</small></button>
+      </div>
       <label class="name-row">NAME
         <input id="duel-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" />
       </label>
@@ -141,7 +145,7 @@
         <button id="duel-copy" type="button">COPY</button>
       </div>
       <button id="duel-join" type="button" class="pw-buy" hidden>▶ JOIN DUEL</button>
-      <p class="duel-note">Your camera stays on your device. Only your bird's height and score are shared.</p>
+      <p class="duel-note">Your camera stays on your device. Only your bird's height and reps are shared.</p>
     </div>
   </div>
 
@@ -254,9 +258,9 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
-  <script src="analytics.js?v=20261019a"></script>
-  <script src="paywall.js?v=20261019a"></script>
-  <script src="duel-net.js?v=20261019a"></script>
-  <script src="script.js?v=20261019a"></script>
+  <script src="analytics.js?v=20261019b"></script>
+  <script src="paywall.js?v=20261019b"></script>
+  <script src="duel-net.js?v=20261019b"></script>
+  <script src="script.js?v=20261019b"></script>
 </body>
 </html>

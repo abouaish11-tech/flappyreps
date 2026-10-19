@@ -598,3 +598,13 @@ body.in-intro #stage .pill { display: none; }
 #skins-list .st { font-size: 7px; color: #5a3a24; text-align: center; line-height: 1.4; }
 .skins-bar { height: 6px; width: 100%; background: #3d1c12; }
 .skins-bar i { display: block; height: 100%; background: #7ec850; }
+
+/* Duel lobby: Rep Race / Survival picker (host only) */
+.duel-fmt { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 14px; }
+.duel-fmt[hidden] { display: none; }
+.duel-fmt button {
+  font: 11px/1.2 var(--font); color: #3d1c12; background: #cfc88a; border: 3px solid #3d1c12;
+  padding: 10px 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.duel-fmt button small { font: 11px/1.3 var(--body); opacity: 0.8; }
+.duel-fmt button.active { background: #7ec850; box-shadow: inset 0 -4px 0 #4a9a2a; }
