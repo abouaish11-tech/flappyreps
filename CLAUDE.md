@@ -140,10 +140,11 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   arrow-key autopilot `pilot(frame, maxPipes)`.
 - Run extras ("Run extras" section of `script.js`, state in the `run` object, reset by
   `resetExtras()` in `resetRun()`):
-  - Heat: `heatFor(score)` = one level per 5 points (10 s in plank), max 4 (WARMING UP, ON
-    FIRE, BLAZING, BEAST MODE). Level-ups show a banner (`heatCheck()`, takes priority over
+  - Heat: `heatFor(score)` = one level per 5 points (10 s in plank), max 4 (CHARGED UP, POWERED
+    UP, SUPERCHARGED, BEAST MODE), in electric `HEAT_COLORS` (cyan → blue → violet → magenta) so it never
+    looks like overheating's red. Level-ups show a banner (`heatCheck()`, takes priority over
     the milestone banner). Visuals in `heatFx()`/`drawBird()`/`drawPipe()`: glow, steam,
-    flame trail, glowing pipes at 3+, bigger "+1!" at 4; the point sound pitches up.
+    spark trail (fire colours only on the Fire Bird skin), glowing pipes at 3+, bigger "+1!" at 4; the point sound pitches up.
   - Real reps: `trackReps()` reads the bird's own swings (hysteresis `REP_HYST`), a rep is
     a down+up pair ≥ `REP_MIN` of the play range, full range ≥ `FULL_REP` ("FULL REP" /
     "3x FULL!" popups). No "go deeper" nag: gap heights dictate how far you move.

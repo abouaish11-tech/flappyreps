@@ -667,9 +667,12 @@
     }
   }
 
-  // Heat: every 5 points (10 s in plank) the bird heats up; tiredness cools it down again.
-  const HEAT_NAMES = ['', 'WARMING UP!', 'ON FIRE!', 'BLAZING!', 'BEAST MODE!'];
-  const HEAT_COLORS = ['', '#ffb347', '#ff7b22', '#ff4d1a', '#ff2a00'];
+  // Heat (the score streak): every 5 points (10 s in plank) the bird charges up with an electric
+  // cyan → blue → violet → magenta glow, kept clear of the red/orange used for overheating (tiredness),
+  // which also damps it.
+  const HEAT_NAMES = ['', 'CHARGED UP!', 'POWERED UP!', 'SUPERCHARGED!', 'BEAST MODE!'];
+  const HEAT_COLORS = ['', '#5fe6ff', '#3d8bff', '#9b5cff', '#ff3df0'];
+  const SPARK_COLORS = ['#ffffff', '#5fe6ff', '#9b5cff'];
   const heatStep = () => (MODES[mode].hold ? 10 : 5);
   const heatFor = (n) => Math.min(4, Math.floor(n / heatStep()));
   // Real reps, read from the bird's own movement: a rep is a down-and-up swing of at least
@@ -739,7 +742,7 @@
     if (lvl <= run.heat) return false;
     run.heat = lvl; run.peakHeat = Math.max(run.peakHeat, lvl);
     fx.banner = { text: HEAT_NAMES[lvl], t: 0, fill: HEAT_COLORS[lvl] };
-    burst(bird.x, bird.y, 30, ['#ffd200', '#ff7b22', '#ff3b1a', '#ffffff'], H * 0.5, -H * 0.2);
+    burst(bird.x, bird.y, 30, [...SPARK_COLORS, HEAT_COLORS[lvl]], H * 0.5, -H * 0.2);
     sfx.milestone();
     return true;
   }
@@ -751,7 +754,7 @@
       if (run.steamT > (run.flame >= 1.5 ? 0.5 : 0.22)) {
         run.steamT = 0;
         fx.particles.push({ x: bird.x + (Math.random() - 0.5) * 20 * unit, y: bird.y - 22 * unit, vx: (Math.random() - 0.5) * 20 * unit, vy: -60 * unit, g: -20 * unit,
-          life: 0.7, age: 0, size: (5 + Math.random() * 4) * unit, color: 'rgba(235,235,235,0.75)', spin: 0, rot: 0 });
+          life: 0.7, age: 0, size: (4 + Math.random() * 3) * unit, color: 'rgba(160,240,255,0.8)', spin: 0, rot: 0 });
       }
     }
     if (run.flame >= 1.5 || skinId === 'fire') {
@@ -761,7 +764,7 @@
         run.emberT -= every;
         const big = Math.max(1, run.flame);
         fx.particles.push({ x: bird.x - 26 * unit, y: bird.y + (Math.random() - 0.5) * 18 * unit, vx: -(80 + Math.random() * 120) * unit, vy: (Math.random() - 0.5) * 50 * unit - 30 * unit, g: -40 * unit,
-          life: 0.25 + 0.08 * big, age: 0, size: (3 + Math.random() * 3 * big) * unit, color: ['#ffd200', '#ff7b22', '#ff3b1a'][(Math.random() * 3) | 0], spin: 0, rot: 0 });
+          life: 0.25 + 0.08 * big, age: 0, size: (3 + Math.random() * 3 * big) * unit, color: (run.flame >= 1.5 ? SPARK_COLORS : ['#ffd200', '#ff7b22', '#ff3b1a'])[(Math.random() * 3) | 0], spin: 0, rot: 0 });
       }
     }
   }
@@ -1174,8 +1177,8 @@
   function onPoint() {
     fx.scorePop = 1;
     const hot = run.heat >= 4;
-    fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: hot ? '+1!' : '+1', fill: hot ? '#ffb347' : undefined, size: hot ? 22 : 16 });
-    burst(bird.x, bird.y, 10, run.heat >= 2 ? ['#ffd200', '#ff7b22', '#ffffff'] : ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
+    fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: hot ? '+1!' : '+1', fill: hot ? HEAT_COLORS[4] : undefined, size: hot ? 22 : 16 });
+    burst(bird.x, bird.y, 10, run.heat >= 2 ? SPARK_COLORS : ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
     if (run.bossBanner) { run.bossBanner = false; heatCheck(); fx.banner = { text: 'BOSS BEATEN!', t: 0, fill: '#7ec850' }; sfx.milestone(); }
     else if (heatCheck()) { /* heat banner shown */ }
     else if (MILESTONES.has(score)) {
@@ -1312,10 +1315,10 @@
       ctx.restore();
     }
     if (run.heat >= 3 && state === 'playing') {
-      // Blazing: the pipes glow from the heat.
+      // Supercharged: the pipes glow with the streak colour.
       ctx.save();
-      ctx.strokeStyle = run.heat >= 4 ? 'rgba(255,90,20,0.75)' : 'rgba(255,150,40,0.55)';
-      ctx.lineWidth = 4 * unit; ctx.shadowColor = '#ff6a00'; ctx.shadowBlur = 18 * unit;
+      ctx.strokeStyle = run.heat >= 4 ? 'rgba(255,61,240,0.75)' : 'rgba(155,92,255,0.6)';
+      ctx.lineWidth = 4 * unit; ctx.shadowColor = HEAT_COLORS[run.heat]; ctx.shadowBlur = 18 * unit;
       ctx.strokeRect(p.x - capOver, -line, p.w + capOver * 2, p.top + line);
       ctx.strokeRect(p.x - capOver, p.bottom, p.w + capOver * 2, gTop - p.bottom);
       ctx.restore();
@@ -1579,7 +1582,7 @@
       const pop = 1 + 0.45 * fx.scorePop * fx.scorePop;
       ctx.save();
       ctx.translate(W / 2, H * 0.12); ctx.scale(pop, pop);
-      text(fmtScore(mode, score), 0, 0, big, { fill: run.heat >= 2 ? '#ffe2b0' : '#fff' });
+      text(fmtScore(mode, score), 0, 0, big, { fill: run.heat >= 2 ? '#d4f6ff' : '#fff' });
       ctx.restore();
       if (daily.on) text(`DAILY ${todayLabel()}${ghost ? ' · BEST ' + ghost.score : ''}`, W / 2, H * 0.12 + 44 * unit, 9 * unit, { fill: '#4fc3f7' });
       if (!MODES[mode].hold) {
