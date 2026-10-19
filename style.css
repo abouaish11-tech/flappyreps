@@ -333,6 +333,20 @@ body.in-intro #stage .pill { display: none; }
   cursor: pointer;
 }
 #start:active { transform: translateY(3px); border-bottom-width: 3px; }
+/* Duel: same size as PLAY, right under it, in versus red */
+#intro-duel {
+  width: 100%;
+  max-width: 340px;
+  font: 16px/1 var(--font);
+  color: #fff;
+  background: #e0432b;
+  border: 0;
+  border-bottom: 6px solid #9e2a18;
+  padding: 20px 20px;
+  cursor: pointer;
+}
+#intro-duel[hidden] { display: none; }
+#intro-duel:active { transform: translateY(3px); border-bottom-width: 3px; }
 .secondary {
   font: 10px/1 var(--font);
   color: var(--accent);
