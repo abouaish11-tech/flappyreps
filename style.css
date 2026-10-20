@@ -21,14 +21,10 @@ html, body {
   touch-action: manipulation;
 }
 
-/* The game is always a 9:16 column (TikTok-shaped clips); on wide screens it sits centred and
-   the pills stay on the game rather than in the window corners. */
+/* The game takes the camera's shape and fills the window (clips are made portrait separately). */
 #stage {
   position: fixed;
   inset: 0;
-  margin: 0 auto;
-  width: min(100vw, calc(100vh * 9 / 16));
-  width: min(100vw, calc(100dvh * 9 / 16));
   display: grid;
   place-items: center;
 }
@@ -42,11 +38,10 @@ html, body {
   pointer-events: none;
 }
 
+/* Scales up to fill the window at the camera's shape: --ar (width / height) is set by resize(). */
 #game {
-  max-width: 100%;
-  max-height: 100vh;
-  max-height: 100dvh;
-  width: auto;
+  width: min(100vw, calc(100vh * var(--ar, 0.5625)));
+  width: min(100vw, calc(100dvh * var(--ar, 0.5625)));
   height: auto;
   image-rendering: pixelated;
   background: #000;

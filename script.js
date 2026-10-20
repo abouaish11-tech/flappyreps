@@ -191,16 +191,29 @@
   function resize(w, h) {
     W = w; H = h;
     canvas.width = W; canvas.height = H;
+    canvas.style.setProperty('--ar', String(W / H));
     unit = Math.min(W, H) / 720;
     bird.x = W * (tune.birdX ?? BIRD_X_FRAC);
     if (!bird.y) bird.y = H / 2;
   }
   resize(720, 1280);
 
-  // The game is always 9:16 portrait (720x1280), so what you see is a full-screen TikTok-shaped
-  // clip. The camera frame is cover-cropped into it: `crop` is the part of the frame on screen,
-  // in normalized camera coordinates (landmarks map through it with camX/camY).
+  // The game takes the camera's shape, so play fills the screen and nothing in the frame is cut
+  // off (a laptop's wide camera keeps both shoulders in view). The canvas's short side is 720.
+  // Clips are recorded separately as 9:16 portrait (see composeClip). `crop` maps normalized
+  // camera coordinates onto the canvas (camX/camY); it is the whole frame unless a frame source
+  // and the canvas ever disagree in shape.
   const crop = { x: 0, y: 0, w: 1, h: 1 };
+  function fitCanvas(vw, vh) {
+    if (!vw || !vh) return false;
+    const nw = vw >= vh ? Math.round(720 * vw / vh) : 720, nh = vw >= vh ? 720 : Math.round(720 * vh / vw);
+    if (nw === W && nh === H) return false;
+    const sx = nw / W, sy = nh / H;
+    resize(nw, nh);
+    for (const p of pipes) { p.x *= sx; p.w = Math.min(W, H) * PIPE_W_FRAC; p.top *= sy; p.bottom *= sy; if (p.cy !== undefined) { p.cy *= sy; p.amp *= sy; p.gap *= sy; } }
+    bird.x = W * (tune.birdX ?? BIRD_X_FRAC); bird.y *= sy; holdY *= sy;
+    return true;
+  }
   function updateCrop() {
     const src = frameSource || video;
     const vw = frameSource ? src.width : src.videoWidth, vh = frameSource ? src.height : src.videoHeight;
@@ -212,9 +225,11 @@
   const camX = (x) => ((x - crop.x) / crop.w) * W;
   const camY = (y) => ((y - crop.y) / crop.h) * H;
 
-  // Portrait ⇄ landscape: the camera's frame flips, the canvas stays 9:16. Only the crop changes,
-  // and the height range is re-learned on the next rep (the calibration reps aren't asked for again).
+  // Portrait ⇄ landscape: the camera's frame flips and the canvas follows it. Pipes and the bird
+  // are rescaled so a run carries on, and the height range is re-learned on the next rep (the
+  // calibration reps aren't asked for again).
   function onVideoResize() {
+    fitCanvas(video.videoWidth, video.videoHeight);
     updateCrop();
     bird.trail = [];
     cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
@@ -245,6 +260,7 @@
       await new Promise((res) => (video.onloadedmetadata = res));
       await video.play();
     }
+    fitCanvas(video.videoWidth, video.videoHeight);
     updateCrop();
     if (!video.__rotWatch) { video.__rotWatch = true; video.addEventListener('resize', onVideoResize); }
 
@@ -529,6 +545,48 @@
   })();
   const recExt = () => (recMime && recMime.startsWith('video/mp4') ? 'mp4' : 'webm');
 
+  // Clips are always 9:16 portrait (720x1280) so they fill a TikTok / Reels screen, whatever shape
+  // the game has on screen. A portrait game fills the clip; a landscape one (laptop camera) sits
+  // full width in the middle over a blurred, darkened copy of itself, with the title and mode
+  // above and the live score and URL below.
+  const CLIP_W = 720, CLIP_H = 1280;
+  const clipCv = document.createElement('canvas'); clipCv.width = CLIP_W; clipCv.height = CLIP_H;
+  const clipCtx = clipCv.getContext('2d');
+  const blurCv = document.createElement('canvas'); blurCv.width = 18; blurCv.height = 32;
+  function clipText(str, x, y, px, fill) {
+    const g = clipCtx;
+    g.font = `${px}px "Press Start 2P", monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineJoin = 'round'; g.lineWidth = Math.max(3, px * 0.22); g.strokeStyle = '#000';
+    g.strokeText(str, x, y); g.fillStyle = fill; g.fillText(str, x, y);
+  }
+  function composeClip() {
+    const g = clipCtx;
+    let k = CLIP_W / W;
+    if (H * k > CLIP_H) k = CLIP_H / H;
+    const gw = W * k, gh = H * k;
+    if (gw >= CLIP_W - 2 && gh >= CLIP_H - 2) { g.drawImage(canvas, 0, 0, CLIP_W, CLIP_H); return; }
+    // Background: the game squeezed through a tiny canvas and stretched back up reads as a blur.
+    const b = blurCv.getContext('2d'), cs = Math.min(W / 9, H / 16);
+    b.drawImage(canvas, (W - 9 * cs) / 2, (H - 16 * cs) / 2, 9 * cs, 16 * cs, 0, 0, blurCv.width, blurCv.height);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(blurCv, 0, 0, CLIP_W, CLIP_H);
+    g.fillStyle = 'rgba(8,10,20,0.6)'; g.fillRect(0, 0, CLIP_W, CLIP_H);
+    const band = (CLIP_H - gh) / 2, x0 = (CLIP_W - gw) / 2, y0 = band - Math.min(70, band * 0.3);
+    g.fillStyle = '#000'; g.fillRect(x0 - 4, y0 - 4, gw + 8, gh + 8);
+    g.drawImage(canvas, x0, y0, gw, gh);
+    if (band < 120) return;
+    const top = y0 - 4, bottom = y0 + gh + 4;
+    clipText('FLAPPY REPS', CLIP_W / 2, top * 0.42, 46, '#f6c948');
+    const sub = raceOn() ? `REP RACE · ${MODES[mode].label}` : daily.on ? `DAILY CHALLENGE · ${MODES[mode].label}` : MODES[mode].label;
+    clipText(sub, CLIP_W / 2, top * 0.42 + 64, 18, '#ffffff');
+    const live = state === 'playing' || state === 'over';
+    const big = !live ? '' : raceOn() ? `${duel.reps} – ${duel.oppReps}` : duel.on ? '' : fmtScore(mode, score);
+    const room = CLIP_H - bottom;
+    if (big) clipText(big, CLIP_W / 2, bottom + room * 0.38, 64, '#ffffff');
+    if (big && raceOn()) clipText(`YOU vs ${duel.oppName}`, CLIP_W / 2, bottom + room * 0.38 + 60, 14, '#c8ccdf');
+    clipText('PLAY FREE AT FLAPPYREPS.COM', CLIP_W / 2, CLIP_H - room * 0.22, 16, '#f6c948');
+  }
+
   function startRecording() {
     if (!canRecord || tune.raw) return;
     stopRecording(true);
@@ -537,7 +595,7 @@
     try {
       if (!recStream) {
         // A fixed capture rate lets the browser stamp frames itself.
-        recStream = canvas.captureStream(REC_FPS);
+        recStream = clipCv.captureStream(REC_FPS);   // the portrait clip canvas, not the game canvas
         recTrack = recStream.getVideoTracks()[0];
         // Game sound only off Apple: Safari's muxer follows the audio clock and squashes the video
         // when that track stalls (e.g. iOS interrupts the AudioContext while the camera runs).
@@ -556,7 +614,7 @@
   }
   function startWebCodecs() {
     try {
-      const w = W & ~1, h = H & ~1;
+      const w = CLIP_W, h = CLIP_H;
       const target = new Mp4Muxer.ArrayBufferTarget();
       const muxer = new Mp4Muxer.Muxer({ target, video: { codec: 'avc', width: w, height: h, frameRate: REC_FPS }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
       const rec = { muxer, target, w, h, next: 0, n: 0, failed: false, enc: null };
@@ -622,21 +680,19 @@
   }
   // Push a frame into the recording after every render.
   // WebCodecs path: encode the freshly rendered canvas at REC_FPS with its real timestamp.
+  // Both paths record clipCv, which composeClip() refreshes from the game canvas.
   function recFrame() {
-    if (!wc || wc.failed) return;
+    if (wc && !wc.failed) {
+      const t = performance.now() - recStart;
+      if (t < wc.next) return;
+      wc.next = t + 1000 / REC_FPS - 2;
+      if (wc.enc.encodeQueueSize > 4) return;          // encoder behind: drop this frame
+    } else if (!(recorder && recorder.state === 'recording')) return;
+    composeClip();
+    if (!wc || wc.failed) return;                      // MediaRecorder captures clipCv by itself
     const t = performance.now() - recStart;
-    if (t < wc.next) return;
-    wc.next = t + 1000 / REC_FPS - 2;
-    if (wc.enc.encodeQueueSize > 4) return;          // encoder behind: drop this frame
     try {
-      let src = canvas;
-      if ((W & ~1) !== wc.w || (H & ~1) !== wc.h) {   // phone rotated mid-run: letterbox into the clip's size
-        if (!wc.off) { wc.off = document.createElement('canvas'); wc.off.width = wc.w; wc.off.height = wc.h; }
-        const o = wc.off.getContext('2d'), k = Math.min(wc.w / W, wc.h / H);
-        o.fillStyle = '#000'; o.fillRect(0, 0, wc.w, wc.h);
-        o.drawImage(canvas, (wc.w - W * k) / 2, (wc.h - H * k) / 2, W * k, H * k);
-        src = wc.off;
-      }
+      const src = clipCv;
       const frame = new VideoFrame(src, { timestamp: Math.round(t * 1000), visibleRect: { x: 0, y: 0, width: wc.w, height: wc.h } });
       wc.enc.encode(frame, { keyFrame: wc.n % (REC_FPS * 2) === 0 });
       frame.close(); wc.n++;
@@ -1875,7 +1931,7 @@
   }
   // The versus card: avatars + ranks, clock, head-to-head, live reps with a tug-of-war bar.
   function raceCard() {
-    const cw = Math.min(W - 32 * unit, 680 * unit), k = cw / 680, ch = 272 * k;
+    const cw = Math.min(W - 32 * unit, (W > H ? 560 : 680) * unit), k = cw / 680, ch = 272 * k;
     const x0 = (W - cw) / 2, y0 = Math.max(16 * unit, H * 0.035, pillsBottom() + 8 * unit);
     const X = (v) => x0 + v * k, Y = (v) => y0 + v * k;
     glass(x0, y0, cw, ch, 28 * k);
@@ -2642,7 +2698,8 @@
         return { y: tracking.targetY, seen: performance.now() - tracking.lastSeen < 200, source: tracking.source };
       },
       // Offline render from still frames (hidden tabs don't decode video on seek).
-      setFrameSource: (src) => { frameSource = src; if (src && src.width) resize(src.width, src.height); updateCrop(); },
+      setFrameSource: (src) => { frameSource = src; if (src && src.width) fitCanvas(src.width, src.height); updateCrop(); },
+      composeClip: () => { composeClip(); return clipCv.toDataURL('image/jpeg', 0.85); },
       trackImage: async (img) => {
         tracking.lastSeen = 0;
         await pose.send({ image: img });

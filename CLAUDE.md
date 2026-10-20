@@ -26,13 +26,14 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   weight 0.35 and with the learned sign. In the stock test clip (phone on the floor in
   front) the shoulders look *smaller* at the bottom, so the old fixed "bigger = lower"
   50/50 blend cancelled the height signal and the bird barely moved.
-- Orientation: the game is always 9:16 portrait (canvas 720x1280) so shared clips are
-  full-screen TikTok videos. The camera frame is cover-cropped into it (`crop`, recomputed
-  every frame in `drawVideo()`; map landmarks to the canvas with `camX`/`camY`, never
-  `x * W`). On wide screens `#stage` is a centred 9:16 column and the pills sit on it.
-  Rotating the phone (manifest `orientation: any`) only changes the crop; `onVideoResize()`
-  resets the height range (calibration reps are not asked for again). Tracking still uses
-  the whole camera frame, so a player outside the crop is still tracked.
+- Orientation: the game takes the camera's shape (`fitCanvas()`: short side 720, so a laptop
+  webcam gives 1280x720 and both shoulders stay in view; a phone held upright gives portrait), and
+  `#game` scales up to fill the window (`--ar` set in `resize()`). Rotating mid-run (manifest
+  `orientation: any`) refits the canvas in `onVideoResize()`, rescales pipes/bird, and resets the
+  height range (calibration reps are not asked for again). Landmarks map to the canvas with
+  `camX`/`camY` through `crop` (the whole frame unless a source and the canvas disagree), never
+  `x * W`. Clips are always 9:16 portrait: see the recorder's `composeClip()`. (A fixed 9:16 game
+  canvas was tried on 2026-10-19 and reverted: on laptops it cropped the shoulders out.)
 - Script/style tags in `index.html` carry `?v=` so phones pick up new code; bump it on
   every deploy that changes JS/CSS. Once the player has shown `REACH_MIN` of travel, pipe gaps
   are spawned inside the observed bird range (`reach`).
@@ -77,12 +78,16 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,
   `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
   recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
-- Run recorder: every countdown starts recording. On Apple browsers (and with `?rec=wc`)
+- Run recorder: every countdown starts recording. Both paths record `clipCv` (720x1280), which
+  `composeClip()` refreshes after each render: a portrait game is copied straight in; a landscape
+  one sits full width in the middle over a blurred, darkened copy of itself (squeezed through the
+  18x32 `blurCv`), with FLAPPY REPS + mode above and the live score (race: reps – reps) and
+  PLAY FREE AT FLAPPYREPS.COM below. `_debug.composeClip()` returns one clip frame as a JPEG. On Apple browsers (and with `?rec=wc`)
   it encodes the canvas with WebCodecs (`VideoEncoder`, H.264 `avc1.42002a`, 30 fps, real
-  timestamps, letterboxed if the phone rotates) and muxes an MP4 with mp4-muxer 5.2.2
+  timestamps) and muxes an MP4 with mp4-muxer 5.2.2
   (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
   MP4s with collapsed timestamps and an "83 day" duration. Elsewhere it uses MediaRecorder
-  on `canvas.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
+  on `clipCv.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
   Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 2.6s after game over (runs with score 0 are discarded, clips cap at
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
