@@ -7,7 +7,7 @@
   // ---------- DOM ----------
   const video = document.getElementById('cam');
   const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d');   // swapped to the clip canvas during the portrait clip pass (renderClipPortrait)
   const statusEl = document.getElementById('status');
   const intro = document.getElementById('intro');
   const startBtn = document.getElementById('start');
@@ -545,46 +545,112 @@
   })();
   const recExt = () => (recMime && recMime.startsWith('video/mp4') ? 'mp4' : 'webm');
 
-  // Clips are always 9:16 portrait (720x1280) so they fill a TikTok / Reels screen, whatever shape
-  // the game has on screen. A portrait game fills the clip; a landscape one (laptop camera) sits
-  // full width in the middle over a blurred, darkened copy of itself, with the title and mode
-  // above and the live score and URL below.
+  // Clips are always 9:16 portrait (720x1280) so they fill a TikTok / Reels screen. A portrait game
+  // is copied straight in. A landscape game (laptop camera) is drawn a second time as a native
+  // portrait game (renderClipPortrait): pipes, bird and ground use the full 9:16 height, and the
+  // camera is shown at full width (both shoulders stay in) with its top and bottom edges fading
+  // into a blurred extension of the room, so the whole screen is filled without cropping you out.
   const CLIP_W = 720, CLIP_H = 1280;
   const clipCv = document.createElement('canvas'); clipCv.width = CLIP_W; clipCv.height = CLIP_H;
   const clipCtx = clipCv.getContext('2d');
   const blurCv = document.createElement('canvas'); blurCv.width = 18; blurCv.height = 32;
-  function clipText(str, x, y, px, fill) {
-    const g = clipCtx;
-    g.font = `${px}px "Press Start 2P", monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.lineJoin = 'round'; g.lineWidth = Math.max(3, px * 0.22); g.strokeStyle = '#000';
-    g.strokeText(str, x, y); g.fillStyle = fill; g.fillText(str, x, y);
-  }
+  const bandCv = document.createElement('canvas');
+  let clipPass = false, lastCompose = 0;
+  const clipFrame = { cx: 0.5, cw: 1 };   // auto-framing window in display coordinates (smoothed)
   function composeClip() {
-    const g = clipCtx;
-    let k = CLIP_W / W;
-    if (H * k > CLIP_H) k = CLIP_H / H;
-    const gw = W * k, gh = H * k;
-    if (gw >= CLIP_W - 2 && gh >= CLIP_H - 2) { g.drawImage(canvas, 0, 0, CLIP_W, CLIP_H); return; }
-    // Background: the game squeezed through a tiny canvas and stretched back up reads as a blur.
-    const b = blurCv.getContext('2d'), cs = Math.min(W / 9, H / 16);
-    b.drawImage(canvas, (W - 9 * cs) / 2, (H - 16 * cs) / 2, 9 * cs, 16 * cs, 0, 0, blurCv.width, blurCv.height);
-    g.imageSmoothingEnabled = true;
-    g.drawImage(blurCv, 0, 0, CLIP_W, CLIP_H);
-    g.fillStyle = 'rgba(8,10,20,0.6)'; g.fillRect(0, 0, CLIP_W, CLIP_H);
-    const band = (CLIP_H - gh) / 2, x0 = (CLIP_W - gw) / 2, y0 = band - Math.min(70, band * 0.3);
-    g.fillStyle = '#000'; g.fillRect(x0 - 4, y0 - 4, gw + 8, gh + 8);
-    g.drawImage(canvas, x0, y0, gw, gh);
-    if (band < 120) return;
-    const top = y0 - 4, bottom = y0 + gh + 4;
-    clipText('FLAPPY REPS', CLIP_W / 2, top * 0.42, 46, '#f6c948');
-    const sub = raceOn() ? `REP RACE · ${MODES[mode].label}` : daily.on ? `DAILY CHALLENGE · ${MODES[mode].label}` : MODES[mode].label;
-    clipText(sub, CLIP_W / 2, top * 0.42 + 64, 18, '#ffffff');
-    const live = state === 'playing' || state === 'over';
-    const big = !live ? '' : raceOn() ? `${duel.reps} – ${duel.oppReps}` : duel.on ? '' : fmtScore(mode, score);
-    const room = CLIP_H - bottom;
-    if (big) clipText(big, CLIP_W / 2, bottom + room * 0.38, 64, '#ffffff');
-    if (big && raceOn()) clipText(`YOU vs ${duel.oppName}`, CLIP_W / 2, bottom + room * 0.38 + 60, 14, '#c8ccdf');
-    clipText('PLAY FREE AT FLAPPYREPS.COM', CLIP_W / 2, CLIP_H - room * 0.22, 16, '#f6c948');
+    if (H >= W && Math.abs(W / H - CLIP_W / CLIP_H) < 0.02) { clipCtx.drawImage(canvas, 0, 0, CLIP_W, CLIP_H); return; }
+    renderClipPortrait();
+  }
+  // Auto-framing for the clip: zoom in around the tracked joints (both shoulders plus a margin) and
+  // follow them smoothly. Runs every frame (render), so it has settled before a recording starts.
+  // Landmarks are in mirrored display coordinates (selfieMode), as is clipFrame.
+  function trackClipFrame() {
+    const pts = performance.now() - tracking.lastSeen < 600 ? tracking.pts : [];
+    let tcx = 0.5, tcw = 1;
+    if (pts.length === 2) { tcx = (pts[0].x + pts[1].x) / 2; tcw = Math.min(1, Math.max(0.55, Math.abs(pts[0].x - pts[1].x) * 1.9)); }
+    else if (pts.length === 1) { tcx = pts[0].x; tcw = clipFrame.cw; }
+    clipFrame.cx += (tcx - clipFrame.cx) * 0.05; clipFrame.cw += (tcw - clipFrame.cw) * 0.05;
+  }
+  // The camera layer of the portrait clip: blurred room behind, sharp full-width band in the middle.
+  function drawClipVideo() {
+    const src = frameSource || (video.readyState >= 2 && video.videoWidth ? video : null);
+    if (!src) {
+      const g = ctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, '#4ec0ca'); g.addColorStop(1, '#8fd8dd');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    const vw = frameSource ? src.width : src.videoWidth, vh = frameSource ? src.height : src.videoHeight;
+    // Never zoom so far that the camera picture is taller than the play area (portrait cameras).
+    const fw = Math.min(1, Math.max(clipFrame.cw, (W * vh) / (vw * groundTop())));
+    const fx0 = Math.min(1 - fw, Math.max(0, clipFrame.cx - fw / 2));
+    const bh = Math.round(W * vh / (vw * fw)), by = Math.round(Math.max(0, (groundTop() - bh) / 2));
+    // Blurred room: the frame around the player squeezed through 18x32 pixels and stretched back up.
+    const cw = Math.min(vw, vh * 9 / 16), b = blurCv.getContext('2d');
+    const bcx = Math.min(vw - cw, Math.max(0, (1 - (fx0 + fw / 2)) * vw - cw / 2));
+    b.drawImage(src, bcx, 0, cw, vh, 0, 0, blurCv.width, blurCv.height);
+    ctx.save();
+    ctx.translate(W, 0); ctx.scale(-1, 1);               // selfie mirror, like the game
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(blurCv, 0, 0, W, H);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(10,12,22,0.35)'; ctx.fillRect(0, 0, W, H);
+    // Sharp band, feathered top and bottom so it melts into the blur.
+    if (bandCv.width !== W || bandCv.height !== bh) { bandCv.width = W; bandCv.height = bh; }
+    const g = bandCv.getContext('2d');
+    g.globalCompositeOperation = 'source-over';
+    g.save(); g.translate(W, 0); g.scale(-1, 1);
+    if (!tune.raw) g.filter = 'saturate(0.8) contrast(1.05)';
+    g.drawImage(src, (1 - fx0 - fw) * vw, 0, fw * vw, vh, 0, 0, W, bh);   // mirrored: display range fx0..fx0+fw
+    g.restore();
+    const fade = Math.min(90, bh * 0.22), m = g.createLinearGradient(0, 0, 0, bh);
+    m.addColorStop(0, 'rgba(0,0,0,0)'); m.addColorStop(fade / bh, 'rgba(0,0,0,1)');
+    m.addColorStop(1 - fade / bh, 'rgba(0,0,0,1)'); m.addColorStop(1, 'rgba(0,0,0,0)');
+    g.globalCompositeOperation = 'destination-in'; g.fillStyle = m; g.fillRect(0, 0, W, bh);
+    g.globalCompositeOperation = 'source-over';
+    ctx.drawImage(bandCv, 0, by);
+    // Landmarks (tracking dots) map into the band.
+    crop.x = fx0; crop.w = fw; crop.y = -by / bh; crop.h = H / bh;
+    drawVignette();
+  }
+  // Draw this frame again as a native 9:16 game into clipCv. Positions are mapped from the game's
+  // space (x by CLIP_W/W, y by CLIP_H/H; the ground is the same fraction of both), drawn, and put
+  // back exactly, so the run itself never sees the clip pass.
+  function renderClipPortrait() {
+    const sx = CLIP_W / W, sy = CLIP_H / H;
+    const saved = {
+      ctx, W, H, unit, pipes, particles: fx.particles, popups: fx.popups, smoke: run.smoke, groundX, holdY, ghostShowY,
+      bird: { x: bird.x, y: bird.y, vy: bird.vy, trail: bird.trail }, crop: { ...crop },
+      showY: duel.showY, barF: duel.barF, skinTrail: skinState.trail,
+    };
+    const P = (o) => ({ ...o, x: o.x * sx, y: o.y * sy });
+    try {
+      clipPass = true;
+      ctx = clipCtx; W = CLIP_W; H = CLIP_H; unit = Math.min(W, H) / 720;
+      pipes = saved.pipes.map((p) => {
+        const w = p.w * sx * 1.2, q = { ...p, x: (p.x + p.w / 2) * sx - w / 2, w, top: p.top * sy, bottom: p.bottom * sy };
+        if (p.cy !== undefined) { q.cy = p.cy * sy; q.amp = p.amp * sy; q.gap = p.gap * sy; }
+        return q;
+      });
+      fx.particles = saved.particles.map(P);
+      fx.popups = saved.popups.map(P);
+      if (saved.smoke) run.smoke = saved.smoke.map(P);
+      groundX = saved.groundX * sx; holdY = saved.holdY * sy;
+      if (saved.ghostShowY !== null) ghostShowY = saved.ghostShowY * sy;
+      bird.x = saved.bird.x * sx; bird.y = saved.bird.y * sy; bird.vy = saved.bird.vy * sy;
+      bird.trail = saved.bird.trail.map(P);
+      if (saved.showY !== null && saved.showY !== undefined) duel.showY = saved.showY * sy;
+      skinState.trail = saved.skinTrail.map((y) => y * sy);
+      renderScene(drawClipVideo);
+    } finally {
+      clipPass = false;
+      ctx = saved.ctx; W = saved.W; H = saved.H; unit = saved.unit;
+      pipes = saved.pipes; fx.particles = saved.particles; fx.popups = saved.popups; run.smoke = saved.smoke;
+      groundX = saved.groundX; holdY = saved.holdY; ghostShowY = saved.ghostShowY;
+      bird.x = saved.bird.x; bird.y = saved.bird.y; bird.vy = saved.bird.vy; bird.trail = saved.bird.trail;
+      Object.assign(crop, saved.crop);
+      duel.showY = saved.showY; duel.barF = saved.barF; skinState.trail = saved.skinTrail;
+    }
   }
 
   function startRecording() {
@@ -687,7 +753,12 @@
       if (t < wc.next) return;
       wc.next = t + 1000 / REC_FPS - 2;
       if (wc.enc.encodeQueueSize > 4) return;          // encoder behind: drop this frame
-    } else if (!(recorder && recorder.state === 'recording')) return;
+    } else {
+      if (!(recorder && recorder.state === 'recording')) return;
+      const now = performance.now();                   // MediaRecorder samples at REC_FPS: compose no faster
+      if (now - lastCompose < 1000 / REC_FPS - 2) return;
+      lastCompose = now;
+    }
     composeClip();
     if (!wc || wc.failed) return;                      // MediaRecorder captures clipCv by itself
     const t = performance.now() - recStart;
@@ -891,6 +962,7 @@
   // Smoke puffs merge on a low-res layer (dark rims, then body, then highlights) that is upscaled
   // without smoothing, so they read as pixel art; old puffs switch to a checker dither as they fade.
   let smokeLayer = null;
+  const smokeLayers = new Map();   // per size (game and portrait clip)
   const smokePat = {};
   function smokeFill(sctx, color, dither) {
     if (!dither) return color;
@@ -904,10 +976,8 @@
   function drawSmoke() {
     if (!run.smoke || !run.smoke.length) return;
     const cell = Math.max(2, Math.round(5 * unit)), lw = Math.ceil(W / cell), lh = Math.ceil(H / cell);
-    if (!smokeLayer || smokeLayer.width !== lw || smokeLayer.height !== lh) {
-      smokeLayer = document.createElement('canvas'); smokeLayer.width = lw; smokeLayer.height = lh;
-      for (const k in smokePat) delete smokePat[k];
-    }
+    smokeLayer = smokeLayers.get(lw + 'x' + lh);
+    if (!smokeLayer) { smokeLayer = document.createElement('canvas'); smokeLayer.width = lw; smokeLayer.height = lh; smokeLayers.set(lw + 'x' + lh, smokeLayer); }
     const s = smokeLayer.getContext('2d');
     s.clearRect(0, 0, lw, lh);
     const pass = (grow, color, hl) => {
@@ -1341,7 +1411,6 @@
   }
 
   // ---------- Drawing ----------
-  let vignette = null, vignetteKey = '';
   function drawVideo() {
     if (frameSource || (video.readyState >= 2 && video.videoWidth)) {
       ctx.save();
@@ -1357,15 +1426,21 @@
       g.addColorStop(0, '#4ec0ca'); g.addColorStop(1, '#8fd8dd');
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
-    // Dark vignette so the frame reads as a stage rather than a raw webcam feed.
+    drawVignette();
+  }
+  // Dark vignette so the frame reads as a stage rather than a raw webcam feed (cached per size:
+  // the game and the portrait clip are drawn at different sizes in the same frame).
+  const vignettes = new Map();
+  function drawVignette() {
+    if (tune.raw) return;
     const key = W + 'x' + H;
-    if (vignetteKey !== key) {
-      vignette = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
-      vignette.addColorStop(0, 'rgba(0,0,0,0)');
-      vignette.addColorStop(1, 'rgba(0,0,0,0.55)');
-      vignetteKey = key;
+    if (!vignettes.has(key)) {
+      const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, 'rgba(0,0,0,0.55)');
+      vignettes.set(key, v);
     }
-    if (!tune.raw) { ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); }
+    ctx.fillStyle = vignettes.get(key); ctx.fillRect(0, 0, W, H);
   }
 
   function drawPipe(p) {
@@ -1429,7 +1504,8 @@
   }
 
   // ---------- Ground strip (two parallax layers, tiles baked once per size) ----------
-  let groundTile = null, groundKey = '';
+  const groundTiles = new Map();   // per canvas size (game and portrait clip)
+  let groundTile = null;
   function bakeGround() {
     const gh = Math.round(groundH()), tw = Math.round(48 * unit);
     const c = document.createElement('canvas');
@@ -1451,11 +1527,11 @@
     }
     g.fill();
     g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(0, gh - 4 * u, tw, 4 * u);  // bottom shade
-    groundTile = c;
-    groundKey = W + 'x' + H;
+    groundTiles.set(W + 'x' + H, c);
   }
   function drawGround() {
-    if (groundKey !== W + 'x' + H) bakeGround();
+    if (!groundTiles.has(W + 'x' + H)) bakeGround();
+    groundTile = groundTiles.get(W + 'x' + H);
     const gt = groundTop(), gh = groundH();
     // Back layer: soft bushes drifting at 40% speed.
     const bushW = 140 * unit, off = (groundX * 0.4) % bushW;
@@ -1977,6 +2053,7 @@
   }
   // Bottom of the HTML pills (✕, status, 🏆, 🔊) in canvas pixels, so the card sits below them.
   function pillsBottom() {
+    if (clipPass) return 0;   // the clip has no HTML pills on it
     const c = canvas.getBoundingClientRect();
     if (!c.height) return 0;
     let bottom = c.top;
@@ -2231,12 +2308,18 @@
   }
 
   function render() {
+    renderScene(drawVideo);
+    trackClipFrame();
+    recFrame();
+  }
+  // Everything drawn for one frame, at the current W/H/ctx; `video` draws the camera layer.
+  function renderScene(video) {
     ctx.save();
     if (fx.shake > 0) {
       const mag = 16 * unit * fx.shake * fx.shake;
       ctx.translate((Math.random() - 0.5) * mag, (Math.random() - 0.5) * mag);
     }
-    drawVideo();
+    video();
     for (const p of pipes) drawPipe(p);
     if (!tune.raw) drawGround();
     if (!attract && !tune.raw) drawTrackingGuide();
@@ -2250,7 +2333,6 @@
     ctx.restore();
     if (fx.flash > 0) { ctx.fillStyle = `rgba(255,255,255,${0.7 * fx.flash})`; ctx.fillRect(0, 0, W, H); }
     if (!tune.raw && !attract && (!duel.on || raceOn())) drawWatermark(); // the survival scoreboard owns the ground strip
-    recFrame();
   }
 
   // ---------- Loop ----------

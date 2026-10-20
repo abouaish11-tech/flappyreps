@@ -78,11 +78,18 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,
   `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
   recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
-- Run recorder: every countdown starts recording. Both paths record `clipCv` (720x1280), which
-  `composeClip()` refreshes after each render: a portrait game is copied straight in; a landscape
-  one sits full width in the middle over a blurred, darkened copy of itself (squeezed through the
-  18x32 `blurCv`), with FLAPPY REPS + mode above and the live score (race: reps – reps) and
-  PLAY FREE AT FLAPPYREPS.COM below. `_debug.composeClip()` returns one clip frame as a JPEG. On Apple browsers (and with `?rec=wc`)
+- Run recorder: every countdown starts recording. Both paths record `clipCv` (720x1280 portrait),
+  refreshed by `composeClip()` (at most `REC_FPS`): a 9:16 game is copied straight in; any other shape
+  (laptop webcam, 4:3 phone cameras) is drawn a second time as a native portrait game by
+  `renderClipPortrait()`: it swaps `ctx`/`W`/`H`/`unit` to the clip, maps the run's positions (x by
+  720/W, y by 1280/H; pipes keep their centre, width × sx × 1.2), calls the shared `renderScene()`
+  with `drawClipVideo()`, then restores everything exactly (`clipPass` is true meanwhile; per-size
+  caches for vignette, ground tiles and smoke layers). `drawClipVideo()` shows the camera at full
+  width, auto-framed around the tracked joints (`trackClipFrame()`, every frame: both shoulders × 1.9,
+  zoom at most to 55% of the width, smoothed) and feathered into a blurred extension of the room
+  (`blurCv`), so clips fill the screen without cropping the player out. `_debug.composeClip()`
+  returns one clip frame as a JPEG. Headless tests with the real tracker need Chrome flags
+  `--use-angle=swiftshader --enable-unsafe-swiftshader` and `?src=<video>&manual=1`. On Apple browsers (and with `?rec=wc`)
   it encodes the canvas with WebCodecs (`VideoEncoder`, H.264 `avc1.42002a`, 30 fps, real
   timestamps) and muxes an MP4 with mp4-muxer 5.2.2
   (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
