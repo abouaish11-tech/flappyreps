@@ -711,13 +711,26 @@
       const muxer = new Mp4Muxer.Muxer({ target, video: { codec: 'avc', width: w, height: h, frameRate: REC_FPS }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
       const rec = { muxer, target, w, h, next: 0, n: 0, failed: false, enc: null };
       rec.enc = new VideoEncoder({
-        output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch (e) { rec.failed = true; console.warn(e); } },
-        error: (e) => { rec.failed = true; console.warn('encoder error', e); },
+        // Safari's encoder leaves chunk.duration empty and mp4-muxer rejects that, which silently
+        // killed every iPhone clip; hand the chunk over raw with one frame's duration instead.
+        output: (chunk, meta) => {
+          try {
+            const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data);
+            muxer.addVideoChunkRaw(data, chunk.type, chunk.timestamp, chunk.duration || Math.round(1e6 / REC_FPS), meta);
+          } catch (e) { wcFailed(rec, e); }
+        },
+        error: (e) => wcFailed(rec, e),
       });
       rec.enc.configure({ codec: WC_CODEC, width: w, height: h, bitrate: 4_000_000, framerate: REC_FPS, avc: { format: 'avc' } });
       wc = rec;
       recStarted();
     } catch (err) { console.warn('webcodecs recording failed', err); wc = null; }
+  }
+  // A WebCodecs clip that fails is lost, so later runs fall back to MediaRecorder rather than failing
+  // silently every time.
+  function wcFailed(rec, e) {
+    if (!rec.failed) console.warn('webcodecs clip failed, using MediaRecorder from the next run', e);
+    rec.failed = true; wcReady = false;
   }
   function recStarted() {
     recStart = performance.now();

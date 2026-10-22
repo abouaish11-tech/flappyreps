@@ -99,7 +99,11 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `--use-angle=swiftshader --enable-unsafe-swiftshader` and `?src=<video>&manual=1`. On Apple browsers (and with `?rec=wc`)
   it encodes the canvas with WebCodecs (`VideoEncoder`, H.264 `avc1.42002a`, 30 fps, real
   timestamps) and muxes an MP4 with mp4-muxer 5.2.2
-  (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
+  (lazy-loaded from jsDelivr); no game audio there. Safari's `VideoEncoder` leaves `chunk.duration` empty, which mp4-muxer's `addVideoChunk` rejects (every
+  iPhone clip silently failed until 2026-10-22), so chunks go in through `addVideoChunkRaw` with one
+  frame's duration; any WebCodecs failure (`wcFailed()`) switches later runs to MediaRecorder. Test the
+  Safari path with Playwright's WebKit (`webkit.launch()`, `devices['iPhone 13']`), not Chrome
+  emulation. Safari's own MediaRecorder produced
   MP4s with collapsed timestamps and an "83 day" duration. Elsewhere it uses MediaRecorder
   on `clipCv.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
   Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 2.6s after game over (runs with score 0 shorter than 3 s are discarded, clips cap at
