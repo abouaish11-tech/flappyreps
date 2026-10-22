@@ -53,6 +53,10 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
 - Camera access needs localhost or https. The Browser pane usually has no camera;
   verify tracking in the user's real Chrome at http://localhost:8766.
 - ↑ / ↓ keys move the bird without a camera (used for testing the game loop).
+- `?debug=1` draws a green diagnostics readout (`drawDiag()`, not in clips): frames drawn and pose
+  results per second, camera vs game size, video `resize` events and real shape flips, tracked joint
+  and shoulder/hip visibility, the learned height range. For tracking problems on a real phone, ask
+  for a screen recording of a run with it.
 - Best score persists per mode: `pushup-bird-best` (push-ups) and
   `pushup-bird-best:squat`.
 - Leaderboard is local to the browser: every finished run with score > 0 is

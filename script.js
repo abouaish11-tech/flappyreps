@@ -234,9 +234,11 @@
   let lastVideoShape = '';
   function onVideoResize() {
     const vw = video.videoWidth, vh = video.videoHeight;
+    diag.resizes++;
     if (!vw || !vh) return;
     const shape = (vw / vh).toFixed(3);
     if (shape === lastVideoShape) return;
+    if (lastVideoShape) diag.flips++;
     const first = !lastVideoShape;
     lastVideoShape = shape;
     fitCanvas(vw, vh);
@@ -312,9 +314,11 @@
   }
 
   function onPose(res) {
+    diag.poses++;
     const lm = res.poseLandmarks;
-    if (!lm) { return; }
+    if (!lm) { diag.vis = 'no body'; return; }
     const v = (i) => (lm[i] ? (lm[i].visibility ?? 1) : 0);
+    diag.vis = `sh ${v(11).toFixed(1)}/${v(12).toFixed(1)} hip ${v(23).toFixed(1)}/${v(24).toFixed(1)}`;
     // Average of whichever points of a pair are visible (one hip/shoulder is enough).
     const pairY = (a, b, th) => { const pts = [a, b].filter((i) => v(i) > th); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
     const [a, b] = MODES[mode].points;
@@ -2365,7 +2369,32 @@
     lastFrame = now;
     update(dt);
     render();
+    if (DIAG) drawDiag(now);
     requestAnimationFrame(frame);
+  }
+
+  // ?debug=1: a small readout for diagnosing tracking on a real device (screen-record a run with it):
+  // frames drawn and pose results per second, camera size, shape changes and resize events,
+  // which joint is tracked and how visible the shoulders are, the learned height range.
+  const DIAG = new URLSearchParams(location.search).get('debug') === '1';
+  const diag = { frames: 0, poses: 0, fps: 0, pps: 0, t0: 0, resizes: 0, flips: 0, vis: '' };
+  function drawDiag(now) {
+    diag.frames++;
+    if (now - diag.t0 >= 1000) { diag.fps = diag.frames; diag.pps = diag.poses; diag.frames = diag.poses = 0; diag.t0 = now; }
+    const lines = [
+      `draw ${diag.fps}/s  pose ${diag.pps}/s`,
+      `cam ${video.videoWidth}x${video.videoHeight}  game ${W}x${H}`,
+      `resize ${diag.resizes}  flips ${diag.flips}`,
+      `track ${tracking.source}  ${diag.vis}`,
+      `range ${cal.lo === null ? '-' : cal.lo.toFixed(2)}..${cal.hi === null ? '-' : cal.hi.toFixed(2)}  y ${tracking.rawY.toFixed(2)}`,
+    ];
+    ctx.save();
+    ctx.font = `${Math.round(15 * unit)}px ui-monospace, Menlo, monospace`; ctx.textBaseline = 'top';
+    const x = 12 * unit, y0 = H * 0.3, lh = 19 * unit;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(x - 6 * unit, y0 - 6 * unit, 330 * unit, lines.length * lh + 10 * unit);
+    ctx.fillStyle = '#7CFC00';
+    lines.forEach((l, i) => ctx.fillText(l, x, y0 + i * lh));
+    ctx.restore();
   }
 
   // ---------- Duels (1 v 1 over a link: 60 s Rep Race, or survival first to 3) ----------
