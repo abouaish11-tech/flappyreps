@@ -10,8 +10,12 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `modelComplexity: 0` (`?model=1` for the heavier model), selfie mode. The tracked
   joint pair uses whichever of the two points is visible; fallbacks (shoulders, then
   nose) are offset so the signal stays continuous. `feedTracking()` → `mapRaw()`
-  stretches the joint's observed travel (`cal.lo..cal.hi`, expands instantly, relaxes
-  at `CAL_RELAX`/s, never below `CAL_MIN_RANGE`) onto the play area (`PLAY_TOP` to
+  stretches the joint's recent travel onto the play area: `cal.lo..cal.hi` (and the size range
+  `scale`) come from `robustRange()`, the 4th..96th percentile of the last `CAL_WINDOW_MS` (6 s),
+  widening fast (`CAL_WIDEN`) and narrowing slowly (`CAL_NARROW`), never below `CAL_MIN_RANGE`.
+  (Until 2026-10-22 it kept every extreme ever seen and barely relaxed after calibration; a user's
+  iPhone-on-the-floor clip showed the range at ~3%..88% of the frame while push-ups used 20%..55%,
+  so the bird only crossed the middle of the screen.) The play area runs from `PLAY_TOP` to
   just above the ground). Calibration: before the first countdown the player does
   `CALIB_REPS` (2) full reps with the primary joint in view (`stepCalib()`: the bird must
   reach the top and bottom zones, shown as bands, and the travel must be ≥ `CAL_READY_RANGE`);

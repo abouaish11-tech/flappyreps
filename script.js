@@ -114,6 +114,22 @@
   // Push-ups: depth = half vertical position, half apparent shoulder width (you get bigger
   // as you come down toward a floor-level phone). A shrug moves y a little but not size.
   const scale = { lo: null, hi: null, last: null };
+  // The height range (cal) and size range (scale) come from the last CAL_WINDOW_MS of movement:
+  // the 4th..96th percentile of recent samples, widening fast and narrowing slowly. They used to
+  // grow to every extreme ever seen and (after calibration) almost never shrink, so getting into
+  // position or standing up between runs stretched the range to most of the frame; on a phone on
+  // the floor a real push-up then moved the bird only through the middle of the screen.
+  const CAL_WINDOW_MS = 6000, CAL_WIDEN = 6, CAL_NARROW = 0.25;   // window; rates per second
+  const calWin = [], scaleWin = [];
+  function robustRange(win, r, v, now, dt) {
+    win.push({ t: now, v });
+    while (win.length && now - win[0].t > CAL_WINDOW_MS) win.shift();
+    const vs = win.map((x) => x.v).sort((a, b) => a - b), q = (p) => vs[Math.round(p * (vs.length - 1))];
+    const tlo = q(0.04), thi = q(0.96);
+    if (r.lo === null) { r.lo = tlo; r.hi = thi; return; }
+    r.lo += (tlo - r.lo) * Math.min(1, (tlo < r.lo ? CAL_WIDEN : CAL_NARROW) * dt);
+    r.hi += (thi - r.hi) * Math.min(1, (thi > r.hi ? CAL_WIDEN : CAL_NARROW) * dt);
+  }
   const SCALE_MIN_RANGE = 0.16;    // shoulder-width change (frame fraction) that counts as a full rep
   const SCALE_READY_RANGE = 0.08;
   let earRatio = 3.2, earRatioSeen = false;   // shoulder width ÷ ear distance, learned per player
@@ -246,6 +262,7 @@
     if (first) return;                  // the stream's first size report, not a rotation
     bird.trail = [];
     cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
+    calWin.length = 0; scaleWin.length = 0;
   }
 
   // ---------- Pose ----------
@@ -346,10 +363,8 @@
   function feedTracking(y, source, sw) {
     const now = performance.now();
     if (typeof sw === 'number' && isFinite(sw)) {
-      if (scale.lo === null) { scale.lo = sw; scale.hi = sw; }
-      scale.lo = Math.min(scale.lo, sw); scale.hi = Math.max(scale.hi, sw);
       const dts = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
-      scale.lo += (sw - scale.lo) * calRelax() * dts; scale.hi += (sw - scale.hi) * calRelax() * dts;
+      robustRange(scaleWin, scale, sw, now, dts);
       scale.last = sw;
     }
     const primary = source === MODES[mode].source;
@@ -379,11 +394,7 @@
     }
     const dtp = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
     cal.lastT = now;
-    if (cal.lo === null) { cal.lo = raw; cal.hi = raw; }
-    // expand instantly, contract slowly
-    cal.lo = Math.min(cal.lo, raw); cal.hi = Math.max(cal.hi, raw);
-    cal.lo += (raw - cal.lo) * calRelax() * dtp;
-    cal.hi += (raw - cal.hi) * calRelax() * dtp;
+    robustRange(calWin, cal, raw, now, dtp);
     const mid = (cal.lo + cal.hi) / 2;
     const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
     let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
@@ -425,7 +436,7 @@
     return [`CALIBRATE ${word} ${Math.min(CALIB_REPS, calibReps() + 1)}/${CALIB_REPS}`, calib.zone === 'low' ? 'NOW COME ALL THE WAY UP' : 'GO ALL THE WAY DOWN'];
   }
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; }
+  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; }
 
   function stopCamera() {
     if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }
