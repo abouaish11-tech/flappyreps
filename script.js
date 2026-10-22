@@ -115,17 +115,33 @@
   // as you come down toward a floor-level phone). A shrug moves y a little but not size.
   const scale = { lo: null, hi: null, last: null };
   // The height range (cal) and size range (scale) come from the last CAL_WINDOW_MS of movement:
-  // the 4th..96th percentile of recent samples, widening fast and narrowing slowly. They used to
+  // the CAL_PCT..1-CAL_PCT percentile of recent samples, widening fast and narrowing slowly. They used to
   // grow to every extreme ever seen and (after calibration) almost never shrink, so getting into
   // position or standing up between runs stretched the range to most of the frame; on a phone on
   // the floor a real push-up then moved the bird only through the middle of the screen.
   const CAL_WINDOW_MS = 6000, CAL_WIDEN = 6, CAL_NARROW = 0.25;   // window; rates per second
+  const CAL_PCT = 0.08;            // ignore the outer 8% each side (brief blips, transitions)
+  const PAIR_COLLAPSE = 0.5;       // a joint pair narrower than half its usual width is a bad fit
+  const pairWidth = {};            // running usual width per joint pair (onPose)
+  // One Euro filter (Casiez et al.) on the tracked height: heavy smoothing when nearly still (no
+  // shaking bird while you hold), almost none when moving fast (no lag on a rep). Tuned on the
+  // user's own clips: halves the shake with no measurable lag.
+  const EURO_MIN_CUT = 1.5, EURO_BETA = 3, EURO_D_CUT = 1.0;   // Hz, Hz per (frame height / s), Hz
+  const euro = { x: null, dx: 0, t: 0 };
+  function euroFilter(v, now) {
+    if (euro.x === null) { euro.x = v; euro.dx = 0; euro.t = now; return v; }
+    const dt = Math.max(1e-3, Math.min(0.5, (now - euro.t) / 1000)); euro.t = now;
+    const a = (fc) => 1 / (1 + 1 / (2 * Math.PI * fc * dt));
+    euro.dx += a(EURO_D_CUT) * ((v - euro.x) / dt - euro.dx);
+    euro.x += a(EURO_MIN_CUT + EURO_BETA * Math.abs(euro.dx)) * (v - euro.x);
+    return euro.x;
+  }
   const calWin = [], scaleWin = [];
   function robustRange(win, r, v, now, dt) {
     win.push({ t: now, v });
     while (win.length && now - win[0].t > CAL_WINDOW_MS) win.shift();
     const vs = win.map((x) => x.v).sort((a, b) => a - b), q = (p) => vs[Math.round(p * (vs.length - 1))];
-    const tlo = q(0.04), thi = q(0.96);
+    const tlo = q(CAL_PCT), thi = q(1 - CAL_PCT);
     if (r.lo === null) { r.lo = tlo; r.hi = thi; return; }
     r.lo += (tlo - r.lo) * Math.min(1, (tlo < r.lo ? CAL_WIDEN : CAL_NARROW) * dt);
     r.hi += (thi - r.hi) * Math.min(1, (thi > r.hi ? CAL_WIDEN : CAL_NARROW) * dt);
@@ -142,9 +158,13 @@
   // (in our test footage they look *smaller*), so the size cue is only blended in once the
   // calibration reps show it moves together with the height signal, and with the right sign.
   const sizeUse = { w: 0, sign: 1 };
+  // Off since 2026-10-22: replaying the user's five recorded runs through the game, the size cue
+  // switched on for one of them and cut full-height reps from 59% to 37% (more shake too); with the
+  // robust height range, height alone tracks better. ?size=1 turns it back on for experiments.
+  const SIZE_CUE = new URLSearchParams(location.search).get('size') === '1';
   function learnSizeCue() {
     const S = calib.samples; sizeUse.w = 0;
-    if (S.length < 20) return;
+    if (!SIZE_CUE || S.length < 20) return;
     const n = S.length, my = S.reduce((a, p) => a + p[0], 0) / n, ms = S.reduce((a, p) => a + p[1], 0) / n;
     let cov = 0, vy = 0, vs = 0;
     for (const [y, sw] of S) { cov += (y - my) * (sw - ms); vy += (y - my) ** 2; vs += (sw - ms) ** 2; }
@@ -262,7 +282,7 @@
     if (first) return;                  // the stream's first size report, not a rotation
     bird.trail = [];
     cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
-    calWin.length = 0; scaleWin.length = 0;
+    calWin.length = 0; scaleWin.length = 0; euro.x = null;
   }
 
   // ---------- Pose ----------
@@ -336,19 +356,29 @@
     if (!lm) { diag.vis = 'no body'; return; }
     const v = (i) => (lm[i] ? (lm[i].visibility ?? 1) : 0);
     diag.vis = `sh ${v(11).toFixed(1)}/${v(12).toFixed(1)} hip ${v(23).toFixed(1)}/${v(24).toFixed(1)}`;
-    // Average of whichever points of a pair are visible (one hip/shoulder is enough).
-    const pairY = (a, b, th) => { const pts = [a, b].filter((i) => v(i) > th); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
+    // A pair reported visible but nearly on top of each other is a bad fit (the face covering the
+    // shoulders close to a floor-level phone does this): that pair counts as unseen this frame.
+    const pairOk = (p, q) => {
+      if (!(v(p) > 0.5 && v(q) > 0.5)) return true;
+      const w = Math.abs(lm[p].x - lm[q].x), k = p + '-' + q, avg = pairWidth[k];
+      if (avg && w < avg * PAIR_COLLAPSE) return false;
+      pairWidth[k] = avg ? avg + (w - avg) * 0.1 : w;
+      return true;
+    };
     const [a, b] = MODES[mode].points;
-    tracking.pts = [a, b].filter((i) => v(i) > 0.5).map((i) => ({ x: lm[i].x, y: lm[i].y }));
-    let y = pairY(a, b, 0.5), source = MODES[mode].source;
-    if (y === null) { y = pairY(11, 12, 0.5); source = 'shoulders'; }
+    const okPrimary = pairOk(a, b), okSh = a === 11 ? okPrimary : pairOk(11, 12);
+    // Average of whichever points of a pair are visible (one hip/shoulder is enough).
+    const pairY = (p, q, ok) => { if (!ok) return null; const pts = [p, q].filter((i) => v(i) > 0.5); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
+    tracking.pts = okPrimary ? [a, b].filter((i) => v(i) > 0.5).map((i) => ({ x: lm[i].x, y: lm[i].y })) : [];
+    let y = pairY(a, b, okPrimary), source = MODES[mode].source;
+    if (y === null) { y = pairY(11, 12, okSh); source = 'shoulders'; }
     if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
     if (y === null) return;
     // Apparent size: shoulder width, or ear distance scaled up when the shoulders are out of frame.
     // The ear→shoulder ratio is learned from this player whenever both are visible, so the
     // size signal doesn't jump when the shoulders leave the frame close to a floor-level phone.
     let sw = null;
-    const shW = v(11) > 0.5 && v(12) > 0.5 ? Math.abs(lm[11].x - lm[12].x) : null;
+    const shW = okSh && v(11) > 0.5 && v(12) > 0.5 ? Math.abs(lm[11].x - lm[12].x) : null;
     const earW = v(7) > 0.5 && v(8) > 0.5 ? Math.abs(lm[7].x - lm[8].x) : null;
     if (shW !== null && earW !== null && earW > 0.01) {
       const r = Math.min(5, Math.max(2, shW / earW));
@@ -373,7 +403,8 @@
     if (primary) { cal.offset = 0; cal.primaryRaw = y; }
     else if (cal.prevSource !== source && cal.primaryRaw !== null) cal.offset = cal.primaryRaw - y;
     cal.prevSource = source;
-    const raw = Math.min(1, Math.max(0, y + cal.offset));
+    if (now - tracking.lastSeen > 1000) euro.x = null;   // don't smooth across a long gap
+    const raw = euroFilter(Math.min(1, Math.max(0, y + cal.offset)), now);
     tracking.rawY = raw;
     tracking.targetY = EXACT ? raw : mapRaw(raw, now);
     tracking.hasPose = true;
@@ -436,7 +467,7 @@
     return [`CALIBRATE ${word} ${Math.min(CALIB_REPS, calibReps() + 1)}/${CALIB_REPS}`, calib.zone === 'low' ? 'NOW COME ALL THE WAY UP' : 'GO ALL THE WAY DOWN'];
   }
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; }
+  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; for (const k in pairWidth) delete pairWidth[k]; euro.x = null; }
 
   function stopCamera() {
     if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }
@@ -2859,6 +2890,8 @@
       // Offline render from still frames (hidden tabs don't decode video on seek).
       setFrameSource: (src) => { frameSource = src; if (src && src.width) fitCanvas(src.width, src.height); updateCrop(); },
       composeClip: () => { composeClip(); return clipCv.toDataURL('image/jpeg', 0.85); },
+      feedPose: (lm) => onPose({ poseLandmarks: lm }),
+      resetCal: () => { resetCal(); tracking.lastSeen = 0; },   // replay recorded landmarks (tests on engines without MediaPipe)
       composeClipRaw: () => { composeClip(); return clipCv.getContext('2d').getImageData(0, 0, 1, 1).data[0]; },
       trackImage: async (img) => {
         tracking.lastSeen = 0;

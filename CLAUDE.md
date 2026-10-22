@@ -11,8 +11,14 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   joint pair uses whichever of the two points is visible; fallbacks (shoulders, then
   nose) are offset so the signal stays continuous. `feedTracking()` → `mapRaw()`
   stretches the joint's recent travel onto the play area: `cal.lo..cal.hi` (and the size range
-  `scale`) come from `robustRange()`, the 4th..96th percentile of the last `CAL_WINDOW_MS` (6 s),
+  `scale`) come from `robustRange()`, the 8th..92nd percentile (`CAL_PCT`) of the last `CAL_WINDOW_MS` (6 s),
   widening fast (`CAL_WIDEN`) and narrowing slowly (`CAL_NARROW`), never below `CAL_MIN_RANGE`.
+  Before that the height is smoothed by a One Euro filter (`euroFilter()`, `EURO_MIN_CUT` 1.5 Hz,
+  `EURO_BETA` 3: still = smooth, fast = no lag), and a joint pair reported visible but narrower than
+  half its usual width (`PAIR_COLLAPSE`, the face covering the shoulders) counts as unseen. All
+  tuned on the user's own recordings: the bench (scratchpad `bench/sim.js`, `sweep.js`) replicates
+  the mapping offline, and `_debug.feedPose(landmarks)` / `_debug.resetCal()` replay recorded
+  landmarks through the real game (works in WebKit, which can't run MediaPipe headless).
   (Until 2026-10-22 it kept every extreme ever seen and barely relaxed after calibration; a user's
   iPhone-on-the-floor clip showed the range at ~3%..88% of the frame while push-ups used 20%..55%,
   so the bird only crossed the middle of the screen.) The play area runs from `PLAY_TOP` to
@@ -24,7 +30,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   calibration the range relaxes much slower (`CAL_RELAX_LOCKED`). `resetCal()` (quit to
   menu) asks for the calibration reps again. Plank ignores the range and moves
   the bird `HOLD_GAIN` × the hip deviation from the locked position. `?exact=1`
-  restores the old 1:1 mapping. Push-ups can blend in *depth by size* (apparent shoulder
+  restores the old 1:1 mapping. Push-ups could blend in *depth by size* (OFF since 2026-10-22, `SIZE_CUE`, `?size=1` to test: on the user's runs it only switched on once and made tracking worse) (apparent shoulder
   width, or ear distance × a per-player ratio learned when both are visible), but only if
   the calibration reps show size moving with height (|r| > 0.7, `learnSizeCue()`), at
   weight 0.35 and with the learned sign. In the stock test clip (phone on the floor in
