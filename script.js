@@ -228,9 +228,20 @@
   // Portrait ⇄ landscape: the camera's frame flips and the canvas follows it. Pipes and the bird
   // are rescaled so a run carries on, and the height range is re-learned on the next rep (the
   // calibration reps aren't asked for again).
+  // Phones fire `resize` on the video without the frame actually changing shape (e.g. when set down
+  // on the floor); only a real change of shape may throw away the learned height range, or the bird's
+  // mapping jumps mid-run. (Resetting on every event, Oct 19-22, made phone tracking feel broken.)
+  let lastVideoShape = '';
   function onVideoResize() {
-    fitCanvas(video.videoWidth, video.videoHeight);
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const shape = (vw / vh).toFixed(3);
+    if (shape === lastVideoShape) return;
+    const first = !lastVideoShape;
+    lastVideoShape = shape;
+    fitCanvas(vw, vh);
     updateCrop();
+    if (first) return;                  // the stream's first size report, not a rotation
     bird.trail = [];
     cal.lo = cal.hi = null; cal.primaryRaw = null; scale.lo = scale.hi = null; reach.lo = reach.hi = null;
   }
@@ -262,6 +273,7 @@
     }
     fitCanvas(video.videoWidth, video.videoHeight);
     updateCrop();
+    lastVideoShape = video.videoWidth && video.videoHeight ? (video.videoWidth / video.videoHeight).toFixed(3) : '';
     if (!video.__rotWatch) { video.__rotWatch = true; video.addEventListener('resize', onVideoResize); }
 
     if (typeof Pose === 'undefined') {
@@ -559,7 +571,17 @@
   const clipFrame = { cx: 0.5, cw: 1 };   // auto-framing window in display coordinates (smoothed)
   function composeClip() {
     if (H >= W && Math.abs(W / H - CLIP_W / CLIP_H) < 0.02) { clipCtx.drawImage(canvas, 0, 0, CLIP_W, CLIP_H); return; }
-    renderClipPortrait();
+    if (H >= W) { fitPortraitClip(); return; }   // phones: keep it cheap so the tracker keeps its frames
+    renderClipPortrait();                          // laptops: a full portrait re-render
+  }
+  // A portrait game that isn't 9:16 (4:3 phone cameras): fit the width, blurred copy behind.
+  function fitPortraitClip() {
+    const g = clipCtx, gh = Math.round(CLIP_W * H / W), y0 = Math.round((CLIP_H - gh) / 2);
+    blurCv.getContext('2d').drawImage(canvas, 0, 0, blurCv.width, blurCv.height);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(blurCv, 0, 0, CLIP_W, CLIP_H);
+    g.fillStyle = 'rgba(10,12,22,0.35)'; g.fillRect(0, 0, CLIP_W, CLIP_H);
+    g.drawImage(canvas, 0, y0, CLIP_W, gh);
   }
   // Auto-framing for the clip: zoom in around the tracked joints (both shoulders plus a margin) and
   // follow them smoothly. Runs every frame (render), so it has settled before a recording starts.
@@ -1097,7 +1119,9 @@
     if (fresh) { run.newSkin = fresh.name; setTimeout(() => { if (state === 'over') fx.banner = { text: `NEW SKIN: ${fresh.name}!`, t: 0, fill: '#7ec850' }; }, 900); }
     if (boardOpen) renderBoard();
     // keep the game-over stats card in the clip for a couple of seconds, then finish it
-    if (score > 0) setTimeout(() => stopRecording(false), 2600); else stopRecording(true);
+    // Keep any run worth watching (a score, or 3 s of play), not just scoring ones: a run that crashed
+    // at the first pipe is often the one people want to share.
+    if (score > 0 || run.t >= 3) setTimeout(() => stopRecording(false), 2600); else stopRecording(true);
   }
   function toReady() { state = 'ready'; stateTimer = 0; againBar.hidden = true; }
 
@@ -2782,6 +2806,7 @@
       // Offline render from still frames (hidden tabs don't decode video on seek).
       setFrameSource: (src) => { frameSource = src; if (src && src.width) fitCanvas(src.width, src.height); updateCrop(); },
       composeClip: () => { composeClip(); return clipCv.toDataURL('image/jpeg', 0.85); },
+      composeClipRaw: () => { composeClip(); return clipCv.getContext('2d').getImageData(0, 0, 1, 1).data[0]; },
       trackImage: async (img) => {
         tracking.lastSeen = 0;
         await pose.send({ image: img });

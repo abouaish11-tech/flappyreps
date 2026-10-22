@@ -30,7 +30,9 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   webcam gives 1280x720 and both shoulders stay in view; a phone held upright gives portrait), and
   `#game` scales up to fill the window (`--ar` set in `resize()`). Rotating mid-run (manifest
   `orientation: any`) refits the canvas in `onVideoResize()`, rescales pipes/bird, and resets the
-  height range (calibration reps are not asked for again). Landmarks map to the canvas with
+  height range (calibration reps are not asked for again), but only when the frame's aspect really
+  changes (`lastVideoShape`): phones fire `resize` without a change, and resetting on every event
+  (Oct 19-22) made phone tracking jumpy. Landmarks map to the canvas with
   `camX`/`camY` through `crop` (the whole frame unless a source and the canvas disagree), never
   `x * W`. Clips are always 9:16 portrait: see the recorder's `composeClip()`. (A fixed 9:16 game
   canvas was tried on 2026-10-19 and reverted: on laptops it cropped the shoulders out.)
@@ -79,8 +81,9 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `setSpawnGate`, `setGapFrac`, `setSpeedStep`. See `marketing/README.md` for the
   recipe. Hidden browser tabs don't decode video on seek, so use JPEG frames.
 - Run recorder: every countdown starts recording. Both paths record `clipCv` (720x1280 portrait),
-  refreshed by `composeClip()` (at most `REC_FPS`): a 9:16 game is copied straight in; any other shape
-  (laptop webcam, 4:3 phone cameras) is drawn a second time as a native portrait game by
+  refreshed by `composeClip()` (at most `REC_FPS`): a 9:16 game is copied straight in; another portrait
+  shape (4:3 phone cameras) is fitted to the width over a blurred copy (`fitPortraitClip()`, cheap so
+  the phone's tracker keeps its frames); a landscape game (laptop webcam) is drawn a second time as a native portrait game by
   `renderClipPortrait()`: it swaps `ctx`/`W`/`H`/`unit` to the clip, maps the run's positions (x by
   720/W, y by 1280/H; pipes keep their centre, width × sx × 1.2), calls the shared `renderScene()`
   with `drawClipVideo()`, then restores everything exactly (`clipPass` is true meanwhile; per-size
@@ -95,7 +98,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   (lazy-loaded from jsDelivr); no game audio there. Safari's own MediaRecorder produced
   MP4s with collapsed timestamps and an "83 day" duration. Elsewhere it uses MediaRecorder
   on `clipCv.captureStream(30)` with the sfx track, one blob at stop (`?rec=mr` forces this).
-  Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 2.6s after game over (runs with score 0 are discarded, clips cap at
+  Prefers `video/mp4` (H.264/AAC) and falls back to WebM. Stops 2.6s after game over (runs with score 0 shorter than 3 s are discarded, clips cap at
   2 min). The `#sharebar` then offers SHARE CLIP: `navigator.share({files})` on
   phones, a download on desktop. A small `flappyreps.com` watermark is drawn on the
   ground strip so shared clips carry the URL.
