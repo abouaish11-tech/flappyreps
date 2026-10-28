@@ -11,7 +11,8 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   joint pair uses whichever of the two points is visible; fallbacks (shoulders, then
   nose) are offset so the signal stays continuous. `feedTracking()` → `mapRaw()`
   stretches the joint's recent travel onto the play area: `cal.lo..cal.hi` (and the size range
-  `scale`) come from `robustRange()`, the 8th..92nd percentile (`CAL_PCT`) of the last `CAL_WINDOW_MS` (6 s),
+  `scale`) come from `robustRange()`, the 8th..92nd percentile (`CAL_PCT`) of the last `CAL_WINDOW_MS` (4 s; 6 s with half the narrowing speed
+  was slower to recover from getting into position),
   widening fast (`CAL_WIDEN`) and narrowing slowly (`CAL_NARROW`), never below `CAL_MIN_RANGE`.
   Before that the height is smoothed by a One Euro filter (`euroFilter()`, `EURO_MIN_CUT` 1.5 Hz,
   `EURO_BETA` 3: still = smooth, fast = no lag), and in push-ups a shoulder pair reported visible but narrower

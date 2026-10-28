@@ -120,7 +120,7 @@
   // grow to every extreme ever seen and (after calibration) almost never shrink, so getting into
   // position or standing up between runs stretched the range to most of the frame; on a phone on
   // the floor a real push-up then moved the bird only through the middle of the screen.
-  const CAL_WINDOW_MS = 6000, CAL_WIDEN = 6, CAL_NARROW = 0.25;   // window; rates per second
+  const CAL_WINDOW_MS = 4000, CAL_WIDEN = 6, CAL_NARROW = 0.5;    // window; rates per second (tuned 2026-10-29)
   const CAL_PCT = 0.08;            // ignore the outer 8% each side (brief blips, transitions)
   const PAIR_COLLAPSE = 0.5;       // a joint pair narrower than half its usual width is a bad fit
   const EDGE_Y = 0.9;              // primary joint below 90% of the frame height counts as unseen
