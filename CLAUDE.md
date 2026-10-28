@@ -14,10 +14,13 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `scale`) come from `robustRange()`, the 8th..92nd percentile (`CAL_PCT`) of the last `CAL_WINDOW_MS` (6 s),
   widening fast (`CAL_WIDEN`) and narrowing slowly (`CAL_NARROW`), never below `CAL_MIN_RANGE`.
   Before that the height is smoothed by a One Euro filter (`euroFilter()`, `EURO_MIN_CUT` 1.5 Hz,
-  `EURO_BETA` 3: still = smooth, fast = no lag), and a joint pair reported visible but narrower than
-  half its usual width (`PAIR_COLLAPSE`, the face covering the shoulders) counts as unseen. All
-  tuned on the user's own recordings: the bench (scratchpad `bench/sim.js`, `sweep.js`) replicates
-  the mapping offline, and `_debug.feedPose(landmarks)` / `_debug.resetCal()` replay recorded
+  `EURO_BETA` 3: still = smooth, fast = no lag), and in push-ups a shoulder pair reported visible but narrower
+  than half its usual width (`PAIR_COLLAPSE`, the face covering the shoulders) counts as unseen
+  (not for hips: side-view plank hips overlap naturally). A primary joint below `EDGE_Y` (0.9) of
+  the frame counts as unseen too (hips leaving the picture in a squat: fall back to shoulders). All
+  tuned on real footage with the bench in `marketing/test/bench/` (gitignored, see its README:
+  `analyze.js` tracks frames, `sim.js` replicates the mapping for all modes offline, `mapreplay.js` /
+  `e2e.js` drive the real game in WebKit), and `_debug.feedPose(landmarks)` / `_debug.resetCal()` replay recorded
   landmarks through the real game (works in WebKit, which can't run MediaPipe headless).
   (Until 2026-10-22 it kept every extreme ever seen and barely relaxed after calibration; a user's
   iPhone-on-the-floor clip showed the range at ~3%..88% of the frame while push-ups used 20%..55%,
@@ -29,7 +32,8 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   and the prompt says "MOVE BACK" while the tracker is on a fallback joint. After
   calibration the range relaxes much slower (`CAL_RELAX_LOCKED`). `resetCal()` (quit to
   menu) asks for the calibration reps again. Plank ignores the range and moves
-  the bird `HOLD_GAIN` × the hip deviation from the locked position. `?exact=1`
+  the bird `HOLD_GAIN` (2.0; 2.2 let tracking noise alone push a still player out of the gap) × the
+  hip deviation from the locked position. Hips relative to shoulders was tried and was noisier. `?exact=1`
   restores the old 1:1 mapping. Push-ups could blend in *depth by size* (OFF since 2026-10-22, `SIZE_CUE`, `?size=1` to test: on the user's runs it only switched on once and made tracking worse) (apparent shoulder
   width, or ear distance × a per-player ratio learned when both are visible), but only if
   the calibration reps show size moving with height (|r| > 0.7, `learnSizeCue()`), at

@@ -109,7 +109,8 @@
   const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
   const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
-  const HOLD_GAIN = 2.2;           // plank: bird moves this many times the hip movement
+  const HOLD_GAIN = 2.0;           // plank: bird moves this many times the hip movement (2.2 let tracking
+                                   // noise alone push a still player out of the gap; tuned 2026-10-29)
   let holdRaw = 0.5, holdBird = 0.5;
   // Push-ups: depth = half vertical position, half apparent shoulder width (you get bigger
   // as you come down toward a floor-level phone). A shrug moves y a little but not size.
@@ -122,6 +123,7 @@
   const CAL_WINDOW_MS = 6000, CAL_WIDEN = 6, CAL_NARROW = 0.25;   // window; rates per second
   const CAL_PCT = 0.08;            // ignore the outer 8% each side (brief blips, transitions)
   const PAIR_COLLAPSE = 0.5;       // a joint pair narrower than half its usual width is a bad fit
+  const EDGE_Y = 0.9;              // primary joint below 90% of the frame height counts as unseen
   const pairWidth = {};            // running usual width per joint pair (onPose)
   // One Euro filter (Casiez et al.) on the tracked height: heavy smoothing when nearly still (no
   // shaking bird while you hold), almost none when moving fast (no lag on a rep). Tuned on the
@@ -356,10 +358,12 @@
     if (!lm) { diag.vis = 'no body'; return; }
     const v = (i) => (lm[i] ? (lm[i].visibility ?? 1) : 0);
     diag.vis = `sh ${v(11).toFixed(1)}/${v(12).toFixed(1)} hip ${v(23).toFixed(1)}/${v(24).toFixed(1)}`;
-    // A pair reported visible but nearly on top of each other is a bad fit (the face covering the
-    // shoulders close to a floor-level phone does this): that pair counts as unseen this frame.
+    // Push-ups: a shoulder pair reported visible but nearly on top of each other is a bad fit (the
+    // face covering the shoulders close to a floor-level phone does this) and counts as unseen.
+    // Not for hips: in a side-view plank the two hips overlap naturally, and treating that as a bad
+    // fit threw away good readings and jolted the bird (found replaying plank footage, 2026-10-29).
     const pairOk = (p, q) => {
-      if (!(v(p) > 0.5 && v(q) > 0.5)) return true;
+      if (mode !== 'pushup' || !(v(p) > 0.5 && v(q) > 0.5)) return true;
       const w = Math.abs(lm[p].x - lm[q].x), k = p + '-' + q, avg = pairWidth[k];
       if (avg && w < avg * PAIR_COLLAPSE) return false;
       pairWidth[k] = avg ? avg + (w - avg) * 0.1 : w;
@@ -371,6 +375,9 @@
     const pairY = (p, q, ok) => { if (!ok) return null; const pts = [p, q].filter((i) => v(i) > 0.5); return pts.length ? pts.reduce((s, i) => s + lm[i].y, 0) / pts.length : null; };
     tracking.pts = okPrimary ? [a, b].filter((i) => v(i) > 0.5).map((i) => ({ x: lm[i].x, y: lm[i].y })) : [];
     let y = pairY(a, b, okPrimary), source = MODES[mode].source;
+    // At the very bottom of the frame the tracker is guessing (hips leaving the picture in a squat):
+    // fall back to the shoulders rather than read a clipped, flickering joint.
+    if (y !== null && y > EDGE_Y) y = null;
     if (y === null) { y = pairY(11, 12, okSh); source = 'shoulders'; }
     if (y === null && v(0) > 0.5) { y = lm[0].y + 0.08; source = 'face'; }
     if (y === null) return;
