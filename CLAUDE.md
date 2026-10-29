@@ -234,6 +234,9 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
     seconds / 3): Classic, Headband 100 (ribbon tails), Shades 250 (backwards cap), Gold 500, Fire Bird
     1000 (flame crest), Ninja 2000, Cyborg 5000 (visor, antenna), King 10000 (crown), Diamond for an
     active Day Pass / Pro. Saved in `pushup-bird-skin`; the 🐤 SKINS intro button opens the picker.
+  - Mid-run moments (`onPoint()`): NEW BEST! once per run when the score passes the stored best (≥ 3),
+    SIX SEVEN! at 67 (the user's "until I score 67" video series), milestone banners say just the
+    score ("25!", not "25 REPS!", since the score counts pipes). Solo only; BOSS BEATEN keeps priority.
   - Game-over card = stats card (reps, full range, slowdown rep, peak heat, daily best,
     PLAY FREE AT FLAPPYREPS.COM); the recorder keeps 2.6 s of it at the end of each clip.
 - After a run: the game-over card stays for `OVER_MS` (30 s) with a countdown; the

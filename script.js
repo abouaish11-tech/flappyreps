@@ -917,7 +917,7 @@
       dir: 0, ext: null, extT: 0, turnY: null, turnT: 0, halves: [], reps: 0, full: 0,
       speeds: [], fatigue: 0, tiredAt: null, tiredShown: false, streak: 0, bestStreak: 0,
       oh: 0, smoke: [], smokeT: 0, sparkT: 0,
-      t: 0, pipeCount: 0, bossBanner: false, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
+      t: 0, pipeCount: 0, bossBanner: false, newBestShown: false, beatGhost: false, ghostDownShown: false, lifetimeBefore: lifetimeReps(),
     });
   }
   const birdN = () => { const bottom = groundTop() - 22 * unit, top = 20 * unit; return (bird.y - top) / Math.max(1, bottom - top); };
@@ -1441,10 +1441,22 @@
     const hot = run.heat >= 4;
     fx.popups.push({ x: bird.x + 36 * unit, y: bird.y - 26 * unit, t: 0, text: hot ? '+1!' : '+1', fill: hot ? HEAT_COLORS[4] : undefined, size: hot ? 22 : 16 });
     burst(bird.x, bird.y, 10, run.heat >= 2 ? SPARK_COLORS : ['#ffffff', '#f7d21c', '#fbe58a'], H * 0.35, H * 0.6);
+    // Mid-run moments the user's "until I score 67" videos are built around: passing your best (shown
+    // once a run) and 67 itself. Solo only; the boss banner keeps priority.
+    const newBest = !duel.on && !run.newBestShown && best >= 3 && score === best + 1;
+    if (newBest) run.newBestShown = true;
     if (run.bossBanner) { run.bossBanner = false; heatCheck(); fx.banner = { text: 'BOSS BEATEN!', t: 0, fill: '#7ec850' }; sfx.milestone(); }
-    else if (heatCheck()) { /* heat banner shown */ }
-    else if (MILESTONES.has(score)) {
-      fx.banner = { text: `${score} REPS!`, t: 0 };
+    else if (heatCheck() && !newBest && score !== 67) { /* heat banner shown */ }
+    else if (score === 67 && !duel.on) {
+      fx.banner = { text: 'SIX SEVEN!', t: 0, fill: '#f6c948' };
+      for (let i = 0; i < 3; i++) burst(W * (0.25 + 0.25 * i), H * 0.4, 40, ['#f6c948', '#ffffff', '#e0432b', '#7ec850'], H * 0.7, H * 0.9);
+      fx.shake = 0.4; sfx.milestone();
+    } else if (newBest) {
+      fx.banner = { text: 'NEW BEST!', t: 0, fill: '#7ec850' };
+      burst(W / 2, H * 0.4, 50, ['#7ec850', '#f6c948', '#ffffff'], H * 0.6, H * 0.8);
+      sfx.milestone();
+    } else if (MILESTONES.has(score)) {
+      fx.banner = { text: `${score}!`, t: 0 };   // the score counts pipes, not reps: don't call it reps (the card has the rep count)
       burst(W / 2, H * 0.4, 40, ['#f7d21c', '#e0432b', '#ffffff', '#4fc3f7'], H * 0.6, H * 0.8);
       sfx.milestone();
     } else {
