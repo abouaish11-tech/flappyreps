@@ -907,7 +907,9 @@
   // Real reps, read from the bird's own movement: a rep is a down-and-up swing of at least
   // REP_MIN of the play range; a full rep travels FULL_REP of it both ways. Rep speed
   // (range covered per second) against the player's own early reps is the tiredness signal.
-  const REP_MIN = 0.15, FULL_REP = 0.6, REP_HYST = 0.06;
+  // REP_HYST was 0.06: a small wobble or bounce at the bottom of a rep split it into fragments too
+  // small to count, so cards showed "3 REPS" after a 21-point run (seen in the user's videos).
+  const REP_MIN = 0.15, FULL_REP = 0.6, REP_HYST = 0.12;
   const run = {};
   function resetExtras() {
     Object.assign(run, {
@@ -1386,7 +1388,9 @@
     for (const p of pipes) {
       p.x -= speed * dt;
       if (p.boss === 'slide') {
-        p.ph += dt;
+        // The gap moves until the bird is inside the pipe, then holds: it used to keep sliding onto
+        // a bird already committed to it (two of the user's recorded runs ended that way).
+        if (!(bird.x + r > p.x && bird.x - r < p.x + p.w)) p.ph += dt;
         const c = p.cy + Math.sin(p.ph * Math.PI * 2 * 0.45) * p.amp;
         p.top = c - p.gap / 2; p.bottom = c + p.gap / 2;
       }
@@ -1411,7 +1415,8 @@
       }
       // circle vs the two pipe rectangles
       const withinX = bird.x + r > p.x && bird.x - r < p.x + p.w;
-      if (withinX && (bird.y - r < p.top || bird.y + r > p.bottom)) {
+      // A pipe already passed (bird centre beyond it, point scored) can't kill the bird's tail.
+      if (!p.passed && withinX && (bird.y - r < p.top || bird.y + r > p.bottom)) {
         if (!raceOn()) { toOver(); return; }
         if (!p.hit && now >= duel.stunUntil) { p.hit = true; raceStun(now); }   // fly through, stunned
       }
