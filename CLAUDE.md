@@ -14,7 +14,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `scale`) come from `robustRange()`, the 8th..92nd percentile (`CAL_PCT`) of the last `CAL_WINDOW_MS` (4 s; 6 s with half the narrowing speed
   was slower to recover from getting into position),
   widening fast (`CAL_WIDEN`) and narrowing slowly (`CAL_NARROW`), never below `CAL_MIN_RANGE[mode]`
-  (push-ups 0.10, squats 0.07: with the phone on the floor close in, the user's hips only travel 7-8%
+  (push-ups and squats 0.07, plank 0.14: with the phone on the floor close in, the user's hips travel 7-8% and shoulders 8-12%
   of the frame in a squat, so the old shared 0.14 kept the bird within ~20-75% of the screen and no
   rep ever counted as full range).
   Before that the height is smoothed by a One Euro filter (`euroFilter()`, `EURO_MIN_CUT` 1.5 Hz,

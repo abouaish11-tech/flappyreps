@@ -107,7 +107,7 @@
   // Smallest joint travel (frame fraction) stretched to the full play height, per mode. Was 0.14 for
   // all: in the user's squat videos (phone on the floor, close) the hips only travel 7-8% of the
   // frame, so the bird never got past ~20-75% of the screen and no rep could count as full range.
-  const CAL_MIN_RANGE = { pushup: 0.10, squat: 0.07, plank: 0.14 };
+  const CAL_MIN_RANGE = { pushup: 0.07, squat: 0.07, plank: 0.14 };
   const CAL_RELAX_FREE = 0.03;     // per second: how fast the range forgets old extremes
   const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
   const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
