@@ -104,7 +104,10 @@
   // Adaptive range: the joint's observed travel (lo..hi, as a fraction of the frame) is
   // stretched onto the play area, so a small movement on camera still reaches every gap.
   const cal = { lo: null, hi: null, lastT: 0, primaryRaw: null, offset: 0, prevSource: null };
-  const CAL_MIN_RANGE = 0.14;      // never amplify more than this (frame fraction → full play height)
+  // Smallest joint travel (frame fraction) stretched to the full play height, per mode. Was 0.14 for
+  // all: in the user's squat videos (phone on the floor, close) the hips only travel 7-8% of the
+  // frame, so the bird never got past ~20-75% of the screen and no rep could count as full range.
+  const CAL_MIN_RANGE = { pushup: 0.10, squat: 0.07, plank: 0.14 };
   const CAL_RELAX_FREE = 0.03;     // per second: how fast the range forgets old extremes
   const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
   const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
@@ -434,7 +437,7 @@
     cal.lastT = now;
     robustRange(calWin, cal, raw, now, dtp);
     const mid = (cal.lo + cal.hi) / 2;
-    const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE);
+    const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE[mode] ?? 0.14);
     let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
     if (mode === 'pushup' && scale.last !== null && !EXACT && sizeUse.w > 0) {
       // Blend in depth-by-size. Neither half is stretched below its minimum range, so a
