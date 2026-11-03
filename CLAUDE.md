@@ -31,7 +31,8 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   so the bird only crossed the middle of the screen.) The play area runs from `PLAY_TOP` to
   just above the ground). Calibration: before the first countdown the player does
   `CALIB_REPS` (2) full reps with the primary joint in view (`stepCalib()`: the bird must
-  reach the top and bottom zones, shown as bands, and the travel must be ≥ `CAL_READY_RANGE`);
+  reach the top and bottom zones, shown as bands, and the robust travel must be ≥ `CAL_READY_RANGE`, 0.05: at 0.07 the user's floor-level phone reps,
+  whose robust range is ~0.057, almost never calibrated; someone holding still stays under it);
   there is no timeout for camera play. Tracked joints are drawn as dots in the ready state,
   and the prompt says "MOVE BACK" while the tracker is on a fallback joint. After
   calibration the range relaxes much slower (`CAL_RELAX_LOCKED`). `resetCal()` (quit to

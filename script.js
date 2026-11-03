@@ -110,7 +110,8 @@
   const CAL_MIN_RANGE = { pushup: 0.07, squat: 0.07, plank: 0.14 };
   const CAL_RELAX_FREE = 0.03;     // per second: how fast the range forgets old extremes
   const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
-  const CAL_READY_RANGE = 0.07;    // one visible rep = at least this much travel
+  const CAL_READY_RANGE = 0.05;    // one visible rep = at least this much travel (0.07 was above the robust range
+                                   // of the user's floor-level phone reps, ~0.057: calibration barely ever finished)
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
   const HOLD_GAIN = 2.0;           // plank: bird moves this many times the hip movement (2.2 let tracking
                                    // noise alone push a still player out of the gap; tuned 2026-10-29)
