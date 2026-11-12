@@ -98,6 +98,20 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   `groundTop()`. `drawGround()` tiles a baked ground strip (`GROUND_FRAC` of H)
   that scrolls with pipe speed (idle drift otherwise) over a slower bush layer;
   the bird is clamped above it and pipe gaps are spawned within the play area.
+- Rep rhythm (since 2026-11-12, the user's call; `REP_RHYTHM`, `?rhythm=0` restores random heights):
+  push-up/squat gaps (solo, daily, duels; not plank) alternate between the very top and the very
+  bottom of the bird's range, first pipe high, so every two pipes is one full rep. The open end of each
+  gap sits 20 units + 1-4.5% of H past the bird's extreme (`PLAY_TOP` / `groundTop() - 0.08H`), so a
+  full rep always fits; the `reach` adaptation is skipped. Spacing went up to `SPAWN_MS` 2500 (was 1900)
+  and the speed cap down to `MAX_SPEED_MULT` 2.0 (was 2.2). Daily ghosts moved to the key
+  `pushup-bird-ghost2:` because old ghosts flew the old courses. Why: with random heights the gaps
+  clustered mid-screen and the user cleared 21 points with 6 push-ups (Day 19).
+- Dead zone (`BACKLASH` 0.15 of the full range, `blN`, reset with `resetCal()` and after 1 s without a
+  pose): the bird ignores back-and-forth wiggles smaller than that and the rest is rescaled so a full
+  rep still reaches the top and bottom. The user's Nov runs (after `CAL_MIN_RANGE` dropped to 0.07)
+  showed 1.8%-of-frame wiggles moving the bird ~15%; replayed through the game, wiggles now move it
+  0-3% while full reps are unchanged. Turning the range floor back up instead would have cut full
+  reps to 54-84% of the screen. Bench: `gain.js`, `locksim.js`, `mapcmp.js`, `rhythmtest.js`.
 - Offline rendering / demo videos: `?src=<video>&manual=1` feeds a file through the
   tracker instead of the webcam; `window.__pushupBird._debug` exposes `render`,
   `step(dt)`, `setState`, `setFrameSource`, `trackImage`, `setGapHook`,

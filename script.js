@@ -52,10 +52,11 @@
   const BIRD_X_FRAC = 0.32;        // bird sits a third of the way across
   const GAP_FRAC = 0.30;           // gap height as a fraction of frame height
   const PIPE_W_FRAC = 0.11;        // pipe width as a fraction of min(W,H)
-  const SPAWN_MS = 1900;           // time between pipes at speed 1
+  const SPAWN_MS = 2500;           // time between pipes at speed 1 (1900 before the rep rhythm: a full
+                                   // swing from a top gap to a bottom gap needs the extra room)
   const BASE_SPEED_FRAC = 0.24;    // pipes travel this fraction of W per second
   const SPEED_STEP = 0.035;        // speed multiplier gained per pipe cleared
-  const MAX_SPEED_MULT = 2.2;
+  const MAX_SPEED_MULT = 2.0;      // 2.2 before the rep rhythm: at full speed every pipe is now half a full rep
   const COUNTDOWN_MS = 3000;
   const OVER_MS = 30000;           // game-over card stays up this long, then restarts on its own
   const POSE_TIMEOUT_MS = 800;     // consider tracking lost after this long
@@ -112,6 +113,13 @@
   const CAL_RELAX_LOCKED = 0.006;  // after the calibration reps: keep the measured top/bottom
   const CAL_READY_RANGE = 0.05;    // one visible rep = at least this much travel (0.07 was above the robust range
                                    // of the user's floor-level phone reps, ~0.057: calibration barely ever finished)
+  // Dead zone: back-and-forth wiggles smaller than BACKLASH of the full range don't move the bird,
+  // and the output is rescaled so a full rep still reaches the top and bottom. Added 2026-11-12: on
+  // the user's runs a 1.8%-of-frame wiggle moved the bird ~15% of the screen (enough to clear mid
+  // gaps without a real rep). Replayed: wiggles now move it 0-3%, full reps unchanged.
+  const BACKLASH = 0.15;
+  const REP_RHYTHM = new URLSearchParams(location.search).get('rhythm') !== '0';   // top/bottom gaps (?rhythm=0: random heights)
+  let blN = null;
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
   const HOLD_GAIN = 2.0;           // plank: bird moves this many times the hip movement (2.2 let tracking
                                    // noise alone push a still player out of the gap; tuned 2026-10-29)
@@ -414,7 +422,7 @@
     if (primary) { cal.offset = 0; cal.primaryRaw = y; }
     else if (cal.prevSource !== source && cal.primaryRaw !== null) cal.offset = cal.primaryRaw - y;
     cal.prevSource = source;
-    if (now - tracking.lastSeen > 1000) euro.x = null;   // don't smooth across a long gap
+    if (now - tracking.lastSeen > 1000) { euro.x = null; blN = null; }   // don't smooth across a long gap
     const raw = euroFilter(Math.min(1, Math.max(0, y + cal.offset)), now);
     tracking.rawY = raw;
     tracking.targetY = EXACT ? raw : mapRaw(raw, now);
@@ -449,6 +457,8 @@
       if (sizeUse.sign < 0) snorm = 1 - snorm;                                   // …unless calibration says smaller = lower
       norm = (1 - sizeUse.w) * norm + sizeUse.w * snorm;
     }
+    blN = blN === null ? norm : Math.min(norm + BACKLASH / 2, Math.max(norm - BACKLASH / 2, blN));
+    norm = Math.min(1, Math.max(0, (blN - BACKLASH / 2) / (1 - BACKLASH)));
     const bottom = groundTop() / H - 0.08;
     const out = PLAY_TOP + norm * (bottom - PLAY_TOP);
     if (reach.lo === null) { reach.lo = out; reach.hi = out; }
@@ -478,7 +488,7 @@
     return [`CALIBRATE ${word} ${Math.min(CALIB_REPS, calibReps() + 1)}/${CALIB_REPS}`, calib.zone === 'low' ? 'NOW COME ALL THE WAY UP' : 'GO ALL THE WAY DOWN'];
   }
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; for (const k in pairWidth) delete pairWidth[k]; euro.x = null; }
+  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; for (const k in pairWidth) delete pairWidth[k]; euro.x = null; blN = null; }
 
   function stopCamera() {
     if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }
@@ -877,7 +887,7 @@
   const todayLabel = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
   function dailySeed() { let h = 2166136261; for (const c of todayKey() + ':' + mode) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
   const dailyBestKey = () => `pushup-bird-daily:${mode}:${todayKey()}`;
-  const ghostKey = () => `pushup-bird-ghost:${mode}:${todayKey()}`;
+  const ghostKey = () => `pushup-bird-ghost2:${mode}:${todayKey()}`;   // 2: courses changed with the rep rhythm
   const dailyBest = () => Number(localStorage.getItem(dailyBestKey()) || 0);
   const GHOST_STEP_MS = 50;
   let ghost = null;                 // { seed, score, ys: [y/H every 50 ms], endMs } — today's best daily run
@@ -896,7 +906,7 @@
     // Old days' ghosts are dead weight.
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
-      if (k && k.startsWith('pushup-bird-ghost:') && !k.endsWith(todayKey())) localStorage.removeItem(k);
+      if (k && k.startsWith('pushup-bird-ghost') && !(k.startsWith('pushup-bird-ghost2:') && k.endsWith(todayKey()))) localStorage.removeItem(k);
     }
   }
 
@@ -1366,7 +1376,15 @@
       // Camera play: keep the gap centre within the range the player has actually reached
       // (the same random draw, mapped into that range, so seeded courses keep their shape).
       let lo = margin + gap / 2, hi = playH - margin - gap / 2;
-      if (!duel.on && !hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
+      if (!hold && REP_RHYTHM) {
+        // Rep rhythm (2026-11-12, the user's call): gaps alternate between the very top and the very
+        // bottom of the bird's range, so every two pipes is one full rep. Random heights clustered in
+        // the middle and let small dips clear pipes (Day 19: 21 points from 6 push-ups). The open end
+        // of each gap sits just past the bird's extreme, so a full rep up or down always fits.
+        const clear = 20 * unit + H * (0.01 + rnd * 0.035);
+        const high = (duel.on ? duel.pipeIdx : run.pipeCount) % 2 === 1;   // first pipe high: you start at the top
+        cy = high ? PLAY_TOP * H - clear + gap / 2 : groundTop() - 0.08 * H + clear - gap / 2;
+      } else if (!duel.on && !hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
         const rl = Math.max(lo, reach.lo * H + 10 * unit), rh = Math.min(hi, reach.hi * H - 10 * unit);
         if (rh > rl) { lo = rl; hi = rh; cy = lo + rnd * (hi - lo); }
       }
