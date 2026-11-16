@@ -99,13 +99,19 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   that scrolls with pipe speed (idle drift otherwise) over a slower bush layer;
   the bird is clamped above it and pipe gaps are spawned within the play area.
 - Rep rhythm (since 2026-11-12, the user's call; `REP_RHYTHM`, `?rhythm=0` restores random heights):
-  push-up/squat gaps (solo, daily, duels; not plank) alternate between the very top and the very
-  bottom of the bird's range, first pipe high, so every two pipes is one full rep. The open end of each
-  gap sits 20 units + 1-4.5% of H past the bird's extreme (`PLAY_TOP` / `groundTop() - 0.08H`), so a
-  full rep always fits; the `reach` adaptation is skipped. Spacing went up to `SPAWN_MS` 2500 (was 1900)
-  and the speed cap down to `MAX_SPEED_MULT` 2.0 (was 2.2). Daily ghosts moved to the key
-  `pushup-bird-ghost2:` because old ghosts flew the old courses. Why: with random heights the gaps
-  clustered mid-screen and the user cleared 21 points with 6 push-ups (Day 19).
+  push-up/squat gaps (solo, daily, duels; not plank) sit at the very top, the very bottom or the middle
+  of the bird's range, planned one pipe ahead by `courseNext()` (state in `course`, reset in
+  `resetRun()`): from an end, 60% the other end (full rep) else the middle; from the middle, 70% on to
+  the other end, 30% back (half rep); never two middles in a row; first gap at the top. Spacing depends
+  on the swing: `SPAWN_FULL` 2800 before a top↔bottom swing, `SPAWN_HALF` 2000 before a swing to or from
+  the middle (varied 2026-11-16 at the user's request: the strict top/bottom alternation of 11-12 felt
+  static). Top/bottom gaps put their open end 20 units + 1-4.5% of H past the bird's extreme
+  (`PLAY_TOP` / `groundTop() - 0.08H`), so a full rep always fits; the `reach` adaptation is skipped.
+  Speed cap `MAX_SPEED_MULT` 2.0 (was 2.2). Solo bosses take a level too (slide = middle, wide = low),
+  and the pipe after the wide boss is pushed back by the boss's extra width: it used to arrive right at
+  its exit and both of the user's 49-point squat runs died there. Planning draws a second random number
+  per pipe (`duelRand(100000 + i)` in duels). Daily ghosts use `pushup-bird-ghost3:` (courses changed).
+  Bench: `rhythmtest.js` (keyboard autopilot; `SECS`, `SHOTS`).
 - Dead zone (`BACKLASH` 0.15 of the full range, `blN`, reset with `resetCal()` and after 1 s without a
   pose): the bird ignores back-and-forth wiggles smaller than that and the rest is rescaled so a full
   rep still reaches the top and bottom. The user's Nov runs (after `CAL_MIN_RANGE` dropped to 0.07)

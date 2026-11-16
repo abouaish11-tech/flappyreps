@@ -52,8 +52,8 @@
   const BIRD_X_FRAC = 0.32;        // bird sits a third of the way across
   const GAP_FRAC = 0.30;           // gap height as a fraction of frame height
   const PIPE_W_FRAC = 0.11;        // pipe width as a fraction of min(W,H)
-  const SPAWN_MS = 2500;           // time between pipes at speed 1 (1900 before the rep rhythm: a full
-                                   // swing from a top gap to a bottom gap needs the extra room)
+  const SPAWN_MS = 2500;           // time between pipes at speed 1 (1900 before the rep rhythm)
+  const SPAWN_FULL = 2800, SPAWN_HALF = 2000;   // rep rhythm: before a top↔bottom swing / a swing to or from the middle
   const BASE_SPEED_FRAC = 0.24;    // pipes travel this fraction of W per second
   const SPEED_STEP = 0.035;        // speed multiplier gained per pipe cleared
   const MAX_SPEED_MULT = 2.0;      // 2.2 before the rep rhythm: at full speed every pipe is now half a full rep
@@ -887,7 +887,7 @@
   const todayLabel = () => new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
   function dailySeed() { let h = 2166136261; for (const c of todayKey() + ':' + mode) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; }
   const dailyBestKey = () => `pushup-bird-daily:${mode}:${todayKey()}`;
-  const ghostKey = () => `pushup-bird-ghost2:${mode}:${todayKey()}`;   // 2: courses changed with the rep rhythm
+  const ghostKey = () => `pushup-bird-ghost3:${mode}:${todayKey()}`;   // 2: courses changed (rep rhythm, then varied levels)
   const dailyBest = () => Number(localStorage.getItem(dailyBestKey()) || 0);
   const GHOST_STEP_MS = 50;
   let ghost = null;                 // { seed, score, ys: [y/H every 50 ms], endMs } — today's best daily run
@@ -906,7 +906,7 @@
     // Old days' ghosts are dead weight.
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i);
-      if (k && k.startsWith('pushup-bird-ghost') && !(k.startsWith('pushup-bird-ghost2:') && k.endsWith(todayKey()))) localStorage.removeItem(k);
+      if (k && k.startsWith('pushup-bird-ghost') && !(k.startsWith('pushup-bird-ghost3:') && k.endsWith(todayKey()))) localStorage.removeItem(k);
     }
   }
 
@@ -1155,11 +1155,24 @@
   }
   resetExtras();
 
+  // ---------- Course shape (rep rhythm) ----------
+  // Gap levels: 0 = very top, 0.5 = middle, 1 = very bottom. From an end, 60% of the time the next gap
+  // is the other end (a full rep), otherwise the middle; from the middle it goes to an end, usually the
+  // one you weren't at (so the middle is a half-way stop), sometimes back (a half rep). Never two middles
+  // in a row. Solo bosses: the sliding gap sits mid, the wide one low. The first gap is at the top.
+  const course = { next: 0, lastExt: 1 };
+  function courseNext(cur, i, r) {
+    if (!duel.on && i % 25 === 0) return (i / 25) % 2 === 1 ? 0.5 : 1;
+    if (cur === 0.5) return r < 0.3 ? course.lastExt : 1 - course.lastExt;
+    return r < 0.6 ? 1 - cur : 0.5;
+  }
+
   // ---------- Game control ----------
   function resetRun() {
     pipes = [];
     score = 0;
     speedMult = 1;
+    course.next = 0; course.lastExt = 1;
     spawnTimer = SPAWN_MS * 0.4; // first pipe arrives quickly
     resetExtras();
     ghostRec = null; ghostShowY = null;
@@ -1369,6 +1382,7 @@
       const playH = groundTop();
       // Duels: both players get the identical course, pipe i always has the same gap.
       const rnd = duel.on ? duelRand(duel.pipeIdx++) : runRand();
+      const rnd2 = duel.on ? duelRand(100000 + duel.pipeIdx) : runRand();   // plans the next pipe
       run.pipeCount++;
       let cy = hold
         ? Math.min(playH - margin - gap / 2, Math.max(margin + gap / 2, holdY))
@@ -1377,13 +1391,19 @@
       // (the same random draw, mapped into that range, so seeded courses keep their shape).
       let lo = margin + gap / 2, hi = playH - margin - gap / 2;
       if (!hold && REP_RHYTHM) {
-        // Rep rhythm (2026-11-12, the user's call): gaps alternate between the very top and the very
-        // bottom of the bird's range, so every two pipes is one full rep. Random heights clustered in
-        // the middle and let small dips clear pipes (Day 19: 21 points from 6 push-ups). The open end
-        // of each gap sits just past the bird's extreme, so a full rep up or down always fits.
+        // Rep rhythm (2026-11-12, varied 2026-11-16): each gap sits at the very top, the very bottom or
+        // the middle of the bird's range (courseNext()). Top/bottom gaps put their open end just past
+        // the bird's extreme, so a full rep always fits. Full swings get extra room (SPAWN_FULL),
+        // half swings to or from the middle come quicker (SPAWN_HALF).
+        const level = course.next, idx = duel.on ? duel.pipeIdx : run.pipeCount;
+        const topY = PLAY_TOP * H, botY = groundTop() - 0.08 * H;
         const clear = 20 * unit + H * (0.01 + rnd * 0.035);
-        const high = (duel.on ? duel.pipeIdx : run.pipeCount) % 2 === 1;   // first pipe high: you start at the top
-        cy = high ? PLAY_TOP * H - clear + gap / 2 : groundTop() - 0.08 * H + clear - gap / 2;
+        cy = level === 0 ? topY - clear + gap / 2
+           : level === 1 ? botY + clear - gap / 2
+           : (topY + botY) / 2 + (rnd - 0.5) * 0.12 * (botY - topY);
+        if (level !== 0.5) course.lastExt = level;
+        course.next = courseNext(level, idx + 1, rnd2);
+        if (tune.spawnMs == null) spawnTimer = Math.abs(course.next - level) > 0.75 ? SPAWN_FULL : SPAWN_HALF;
       } else if (!duel.on && !hold && keyboardY === null && reach.lo !== null && (reach.hi - reach.lo) >= REACH_MIN * (playH / H)) {
         const rl = Math.max(lo, reach.lo * H + 10 * unit), rh = Math.min(hi, reach.hi * H - 10 * unit);
         if (rh > rl) { lo = rl; hi = rh; cy = lo + rnd * (hi - lo); }
@@ -1399,6 +1419,10 @@
           pipe.boss = 'wide'; pipe.w = pipeW * 2.6; pipe.x = W + pipe.w;
           const low = lo + 0.8 * (hi - lo);
           pipe.top = low - gap / 2; pipe.bottom = low + gap / 2;
+          // The next pipe is timed from where a normal pipe would end, so it used to arrive right at
+          // this pipe's exit: two of the user's squat runs died there at 49 (no room to climb out of
+          // HOLD LOW). Push it back by the extra width so the usual room follows the boss.
+          if (tune.spawnMs == null) spawnTimer += (pipe.x + pipe.w - (W + 2 * pipeW)) / (W * (tune.speedFrac ?? BASE_SPEED_FRAC) / 1000);
         }
         fx.banner = { text: pipe.boss === 'slide' ? 'BOSS PIPE: IT MOVES!' : 'BOSS PIPE: HOLD LOW!', t: 0, fill: '#e0432b' };
         sfx.tick();
