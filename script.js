@@ -117,7 +117,8 @@
   // and the output is rescaled so a full rep still reaches the top and bottom. Added 2026-11-12: on
   // the user's runs a 1.8%-of-frame wiggle moved the bird ~15% of the screen (enough to clear mid
   // gaps without a real rep). Replayed: wiggles now move it 0-3%, full reps unchanged.
-  const BACKLASH = 0.15;
+  const BACKLASH = 0.08;            // was 0.15: with the fixed scale (below) wiggles no longer get stretched,
+                                   // and 0.15 made the bird hang back when the player really moved
   const REP_RHYTHM = new URLSearchParams(location.search).get('rhythm') !== '0';   // top/bottom gaps (?rhythm=0: random heights)
   let blN = null;
   const PLAY_TOP = 0.10;           // mapped bird range (fractions of H), bottom is above the ground
@@ -151,15 +152,22 @@
     return euro.x;
   }
   const calWin = [], scaleWin = [];
-  function robustRange(win, r, v, now, dt) {
+  function robustRange(win, r, v, now, dt, narrow = CAL_NARROW) {
     win.push({ t: now, v });
     while (win.length && now - win[0].t > CAL_WINDOW_MS) win.shift();
     const vs = win.map((x) => x.v).sort((a, b) => a - b), q = (p) => vs[Math.round(p * (vs.length - 1))];
     const tlo = q(CAL_PCT), thi = q(1 - CAL_PCT);
     if (r.lo === null) { r.lo = tlo; r.hi = thi; return; }
-    r.lo += (tlo - r.lo) * Math.min(1, (tlo < r.lo ? CAL_WIDEN : CAL_NARROW) * dt);
-    r.hi += (thi - r.hi) * Math.min(1, (thi > r.hi ? CAL_WIDEN : CAL_NARROW) * dt);
+    r.lo += (tlo - r.lo) * Math.min(1, (tlo < r.lo ? CAL_WIDEN : narrow) * dt);
+    r.hi += (thi - r.hi) * Math.min(1, (thi > r.hi ? CAL_WIDEN : narrow) * dt);
   }
+  // Fixed scale after calibration (2026-11-18, the user's ask: "a full push-up down = bird fully down,
+  // half way = middle, up = up"). The calibration reps set the range (calib.range, the largest robust
+  // range seen while calibrating); after that it only widens, narrows at CAL_NARROW_LOCKED and never
+  // below CAL_KEEP of it, and it isn't updated outside play (standing up, getting into position).
+  // Before, the 4 s window shrank to whatever the last few seconds did, so shallow dips filled the
+  // screen; replayed on the user's runs the bird is 37% more consistent for the same depth.
+  const CAL_NARROW_LOCKED = 0.02, CAL_KEEP = 0.85;
   const SCALE_MIN_RANGE = 0.16;    // shoulder-width change (frame fraction) that counts as a full rep
   const SCALE_READY_RANGE = 0.08;
   let earRatio = 3.2, earRatioSeen = false;   // shoulder width ÷ ear distance, learned per player
@@ -167,7 +175,7 @@
   // Calibration: before the first countdown the player does CALIB_REPS full reps with the right
   // joint in view. Each rep must swing the bird from the top zone to the bottom zone and back.
   const CALIB_REPS = 2;
-  const calib = { zone: null, halves: 0, done: false, samples: [] };
+  const calib = { zone: null, halves: 0, done: false, samples: [], range: 0 };
   // Whether the shoulders look bigger or smaller at the bottom depends on where the phone sits
   // (in our test footage they look *smaller*), so the size cue is only blended in once the
   // calibration reps show it moves together with the height signal, and with the right sign.
@@ -444,9 +452,11 @@
     }
     const dtp = cal.lastT ? Math.min(0.5, (now - cal.lastT) / 1000) : 0;
     cal.lastT = now;
-    robustRange(calWin, cal, raw, now, dtp);
-    const mid = (cal.lo + cal.hi) / 2;
-    const range = Math.max(cal.hi - cal.lo, CAL_MIN_RANGE[mode] ?? 0.14);
+    if (state === 'playing' || !calib.done) robustRange(calWin, cal, raw, now, dtp, calib.done ? CAL_NARROW_LOCKED : CAL_NARROW);
+    let lo = cal.lo, hi = cal.hi;
+    if (calib.done && calib.range && hi - lo < calib.range * CAL_KEEP) { const m = (lo + hi) / 2; lo = m - calib.range * CAL_KEEP / 2; hi = m + calib.range * CAL_KEEP / 2; }
+    const mid = (lo + hi) / 2;
+    const range = Math.max(hi - lo, CAL_MIN_RANGE[mode] ?? 0.14);
     let norm = Math.min(1, Math.max(0, (raw - mid) / range + 0.5));
     if (mode === 'pushup' && scale.last !== null && !EXACT && sizeUse.w > 0) {
       // Blend in depth-by-size. Neither half is stretched below its minimum range, so a
@@ -475,6 +485,7 @@
     const n = (tracking.targetY - PLAY_TOP) / (bottom - PLAY_TOP);
     // The range must also be a real movement, not a twitch amplified to full height.
     const big = calRange() >= CAL_READY_RANGE;
+    calib.range = Math.max(calib.range || 0, calRange());   // the scale the run will keep
     const zone = !big ? calib.zone : n > 0.72 ? 'low' : n < 0.28 ? 'high' : calib.zone;
     if (zone && zone !== calib.zone) {
       if (calib.zone) { calib.halves++; if (calib.halves % 2 === 0) sfx.point(); }
@@ -488,7 +499,7 @@
     return [`CALIBRATE ${word} ${Math.min(CALIB_REPS, calibReps() + 1)}/${CALIB_REPS}`, calib.zone === 'low' ? 'NOW COME ALL THE WAY UP' : 'GO ALL THE WAY DOWN'];
   }
   const calRange = () => (cal.lo === null ? 0 : cal.hi - cal.lo);
-  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; for (const k in pairWidth) delete pairWidth[k]; euro.x = null; blN = null; }
+  function resetCal() { calib.zone = null; calib.halves = 0; calib.done = false; calib.samples = []; calib.range = 0; sizeUse.w = 0; cal.lo = cal.hi = null; cal.lastT = 0; cal.primaryRaw = null; cal.offset = 0; cal.prevSource = null; scale.lo = scale.hi = null; scale.last = null; reach.lo = reach.hi = null; calWin.length = 0; scaleWin.length = 0; for (const k in pairWidth) delete pairWidth[k]; euro.x = null; blN = null; }
 
   function stopCamera() {
     if (video.srcObject) { video.srcObject.getTracks().forEach((t) => t.stop()); video.srcObject = null; }

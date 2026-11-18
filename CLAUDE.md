@@ -17,6 +17,12 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   (push-ups and squats 0.07, plank 0.14: with the phone on the floor close in, the user's hips travel 7-8% and shoulders 8-12%
   of the frame in a squat, so the old shared 0.14 kept the bird within ~20-75% of the screen and no
   rep ever counted as full range).
+  **Fixed scale after calibration** (2026-11-18, the user's ask: full push-up = bird at the bottom, half way =
+  middle, up = top): `calib.range` is the largest robust range seen while calibrating; after that the range
+  only widens fast, narrows at `CAL_NARROW_LOCKED` (0.02/s) and never below `CAL_KEEP` (0.85) of it, and it
+  isn't updated outside `playing` (between runs, countdown). Before, the 4 s window shrank to whatever the
+  last seconds did, so shallow dips sent the bird to the bottom (user's Nov 18 clip: half way down → 0.9).
+  Replayed in WebKit: depth→bird 0.00/0.22/0.59/0.78/1.00 became 0.09/0.27/0.58/0.69/1.00 per 20% band.
   Before that the height is smoothed by a One Euro filter (`euroFilter()`, `EURO_MIN_CUT` 1.5 Hz,
   `EURO_BETA` 3: still = smooth, fast = no lag), and in push-ups a shoulder pair reported visible but narrower
   than half its usual width (`PAIR_COLLAPSE`, the face covering the shoulders) counts as unseen
@@ -112,7 +118,7 @@ served with `python3 -m http.server 8766` (config name "pushupbird" in
   its exit and both of the user's 49-point squat runs died there. Planning draws a second random number
   per pipe (`duelRand(100000 + i)` in duels). Daily ghosts use `pushup-bird-ghost3:` (courses changed).
   Bench: `rhythmtest.js` (keyboard autopilot; `SECS`, `SHOTS`).
-- Dead zone (`BACKLASH` 0.15 of the full range, `blN`, reset with `resetCal()` and after 1 s without a
+- Dead zone (`BACKLASH` 0.08 of the full range since 2026-11-18, was 0.15, which made the bird hang back, `blN`, reset with `resetCal()` and after 1 s without a
   pose): the bird ignores back-and-forth wiggles smaller than that and the rest is rescaled so a full
   rep still reaches the top and bottom. The user's Nov runs (after `CAL_MIN_RANGE` dropped to 0.07)
   showed 1.8%-of-frame wiggles moving the bird ~15%; replayed through the game, wiggles now move it
